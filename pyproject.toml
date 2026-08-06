@@ -22,7 +22,7 @@ classifiers = [
 # Deliberately tiny. `kiyas doctor` must run on a bare interpreter so it can
 # tell the user what is missing -- a diagnostic that needs its own dependencies
 # installed first is useless.
-dependencies = ["rich>=13"]
+dependencies = ["rich>=13", "requests>=2.31"]
 
 [project.optional-dependencies]
 # The VapourSynth stack. Every one of these ships a win_amd64 wheel and

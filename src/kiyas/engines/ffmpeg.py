@@ -138,9 +138,11 @@ class FfmpegSource:
 
         Burning the source name in would need ffmpeg's drawtext filter, which
         needs a font file path. There is no portable way to name one across
-        Windows, Linux and macOS, and a comparison where the label silently
-        failed to render on one machine is worse than one with no labels at
-        all. The orchestrator reports this so the difference is not a surprise.
+        Windows, Linux and macOS, and this is not theoretical: drawtext with no
+        explicit font crashed outright -- an access violation, not an error
+        message -- on the development machine. A comparison where the label
+        silently failed to render on one machine is worse than one with no
+        labels at all, so the orchestrator reports the difference instead.
         """
         return False
 

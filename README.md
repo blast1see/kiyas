@@ -6,10 +6,9 @@ screenshots from several sources, analyse audio, and publish the result to
 
 *kıyas* is Turkish for "comparison".
 
-> **Status: early but usable.** Source comparisons work end to end: point it at
-> two or more files and it writes frame-matched, tonemapped screenshots.
-> slow.pics publishing, mpv integration, audio analysis and the GUI are still
-> to come. See [Roadmap](#roadmap).
+> **Status: usable.** Point it at two or more files and it writes frame-matched,
+> tonemapped screenshots and publishes them to slow.pics. mpv integration,
+> audio analysis and the GUI are still to come. See [Roadmap](#roadmap).
 
 ---
 
@@ -113,6 +112,7 @@ kiyas doctor              # what engines and tools are available, and what is mi
 kiyas setup               # install the VapourSynth stack into the current environment
 kiyas init project.toml   # write a starter project file
 kiyas run project.toml    # produce the comparison
+kiyas publish out/        # upload it to slow.pics
 ```
 
 A project is a TOML file. Six sources with individual crops, trims and
@@ -158,13 +158,30 @@ selected position forward until the frame is a B-frame *in every source*.
 **Skip dark**: a frame that is essentially black compares nothing. Brightness is
 measured over the centre of the picture so letterbox bars do not skew it.
 
+## Publishing
+
+```
+kiyas publish out/                  # unlisted, PNG preserved
+kiyas publish out/ --public         # listed on the site
+kiyas publish out/ --remove-after 7 # let slow.pics delete it after a week
+kiyas run project.toml --publish    # do both in one go
+```
+
+Comparisons are **unlisted by default**. A comparison is usually a working
+document, and putting one on the site's front page should be a decision rather
+than something that happens because you did not pass a flag.
+
+Every image is hashed before upload and the digests go up with the collection
+metadata, so slow.pics can say which ones it already holds. Re-running a
+publish that died halfway only sends what is missing.
+
 ## Roadmap
 
 | Phase | Scope | State |
 |---|---|---|
 | 0 | Environment setup, diagnostics, binary resolution | **done** |
 | 1 | Source model, project TOML, frame selection, VapourSynth + ffmpeg engines, tonemapping | **done** |
-| 2 | slow.pics upload, forum BBCode | next |
+| 2 | slow.pics upload, forum markup | **done** |
 | 3 | mpv layer: portable config dir, frame picker, settings comparison, side-by-side playback | planned |
 | 4 | Audio: spectrograms, waveforms, frequency response, bit depth, offset, metadata table | planned |
 | 5 | PySide6 desktop interface | planned |

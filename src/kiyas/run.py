@@ -247,7 +247,7 @@ def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:
         for item in prepared:
             item.close()
 
-    manifest = _write_manifest(project, engine_name, frames, results, warnings)
+    manifest = _write_manifest(project, engine_name, frames, results, warnings, target_fps)
     return RunResult(project, engine_name, frames, results, manifest, warnings)
 
 
@@ -257,6 +257,7 @@ def _write_manifest(
     frames: list[int],
     results: list[SourceResult],
     warnings: list[str],
+    fps: Fraction,
 ) -> Path:
     """Record what was produced.
 
@@ -270,6 +271,9 @@ def _write_manifest(
         "mode": project.mode.value,
         "engine": engine_name,
         "created": datetime.now(UTC).isoformat(timespec="seconds"),
+        # As a string ratio, never a float: publishing turns frame numbers into
+        # timestamps, and 23.976 is not 24000/1001.
+        "fps": f"{fps.numerator}/{fps.denominator}",
         "frames": frames,
         "warnings": warnings,
         "sources": [

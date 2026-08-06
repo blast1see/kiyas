@@ -196,6 +196,39 @@ against real material; feature-length remuxes are at
   the engine. Within one run only one engine is used, so a comparison is never
   internally inconsistent -- but a run is only reproducible against itself.
 
+## Publishing
+
+slow.pics has no public API documentation. The request shapes in
+`publish/slowpics.py` were read off a working client (`vsview-comp`) and then
+checked against the live service; do not change them from first principles.
+
+- **The image grid is transposed between the two sides.** The server returns
+  `images[frame][source]`; kiyas holds `sources[source][frame]`. Getting this
+  backwards uploads every picture into the wrong cell, and the result does not
+  error — it looks like a dramatic difference between the releases. Verified
+  live by giving the two sources visibly different file sizes and reading them
+  back out of the server's own JSON.
+
+- **A 400 is sometimes a success.** `X-Error-Message: IMAGE_IS_COMPLETE` means
+  the hash matched something already stored, so the image is in the collection
+  and there is nothing to do. Treating it as an error aborts uploads that
+  actually worked. Any other 400 is real and stops everything.
+
+- **Send the hashes first.** They are what let the server say which images it
+  already has, so re-running after a partial failure only sends the rest.
+
+- **`/api/collection/{key}` is blocked** (403 at the edge) even though
+  `/c/{key}` is not. To inspect a published collection, fetch the page and read
+  the `var collection = {...}` blob out of the HTML.
+
+- **Publishing defaults are deliberately timid.** `LINK_ONLY`, no expiry, no
+  markup. `run --publish` uses the same conservative set. Anything that pushes
+  a comparison further into the world than the person asked for should require
+  them to say so.
+
+- **Never test publishing with the user's media.** `tests/` and any live check
+  use ffmpeg-generated synthetic images, unlisted, with an expiry.
+
 ## House style
 
 Comments explain *why*, not *what*, and the reason is usually a measurement or
