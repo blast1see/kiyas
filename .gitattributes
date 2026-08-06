@@ -1,0 +1,12 @@
+# Normalise line endings in the repository, check out native.
+* text=auto eol=lf
+
+# PowerShell is happier with CRLF on Windows and this file is Windows-only.
+*.ps1 text eol=crlf
+
+# Never touch these.
+*.png binary
+*.jpg binary
+*.mkv binary
+*.mp4 binary
+*.lwi binary

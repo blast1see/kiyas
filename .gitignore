@@ -1,0 +1,34 @@
+# Environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# VapourSynth indexer caches. These sit next to the media and can be large.
+*.ffindex
+*.lwi
+*.json.lwi
+
+# kiyas output
+out/
+screens/
+*.kiyas.local.toml
+
+# Secrets. slow.pics session cookies and any API keys live here.
+.env
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

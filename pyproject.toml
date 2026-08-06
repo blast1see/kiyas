@@ -1,0 +1,103 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kiyas"
+version = "0.1.0"
+description = "A comparison workbench for video and audio releases: generate screenshots, analyse audio, publish to slow.pics"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "blast1see" }]
+keywords = ["vapoursynth", "ffmpeg", "mpv", "slowpics", "comparison", "screenshots", "encoding"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+]
+
+# Deliberately tiny. `kiyas doctor` must run on a bare interpreter so it can
+# tell the user what is missing -- a diagnostic that needs its own dependencies
+# installed first is useless.
+dependencies = ["rich>=13"]
+
+[project.optional-dependencies]
+# The VapourSynth stack. Every one of these ships a win_amd64 wheel and
+# installs its plugin into <site-packages>/vapoursynth/plugins, i.e. inside
+# the virtualenv. Nothing lands in Program Files or the registry.
+vs = [
+    "vapoursynth>=78",
+    "vapoursynth-lsmas",
+    "vapoursynth-bestsource",
+    "vapoursynth-fillborders",
+    "vapoursynth-vivtc",
+    "vapoursynth-subtext",
+    "vs-placebo",
+    "vsfpng",
+    "awsmfunc",
+    "vstools",
+]
+audio = ["numpy>=1.24", "scipy>=1.10", "soundfile>=0.12", "matplotlib>=3.8"]
+# Offset measurement is already solved in AudioSyncTool; kiyas wraps it rather
+# than re-deriving GCC-PHAT. It is not on PyPI and a direct git reference here
+# would make this package unpublishable, so it stays an explicit manual step:
+#     pip install git+https://github.com/blast1see/AudioSyncTool
+# Without it kiyas falls back to a coarse scipy correlation and says so.
+gui = ["PySide6>=6.7"]
+dev = ["pytest>=8.3", "pytest-cov>=6", "ruff>=0.11"]
+build = ["pyinstaller>=6.12"]
+
+[project.scripts]
+kiyas = "kiyas.cli:main"
+
+[project.gui-scripts]
+kiyas-gui = "kiyas.gui.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/blast1see/kiyas"
+Issues = "https://github.com/blast1see/kiyas/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kiyas"]
+
+[tool.pytest.ini_options]
+minversion = "8.3"
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+markers = [
+    "integration: requires working FFmpeg and FFprobe binaries",
+    "vapoursynth: requires an installed VapourSynth stack",
+    "mpv: requires an installed mpv binary",
+    "gui: requires a graphical display",
+    "live: talks to slow.pics for real; never runs in CI",
+]
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+source = ["src/kiyas"]
+
+[tool.coverage.report]
+fail_under = 75
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    '\.\.\.$',
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "UP"]
+ignore = ["B905"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["B011"]
