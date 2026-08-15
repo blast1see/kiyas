@@ -53,6 +53,15 @@ def build_parser() -> argparse.ArgumentParser:
     templates_help = "List the built-in settings-comparison templates."
     sub.add_parser("templates", help=templates_help, description=templates_help)
 
+    gui_help = "Open the desktop interface."
+    gui = sub.add_parser("gui", help=gui_help, description=gui_help)
+    gui.add_argument(
+        "paths",
+        nargs="*",
+        type=Path,
+        help="Files to add, or a project file to open.",
+    )
+
     pick_help = "Choose frames by watching the file in mpv."
     pick = sub.add_parser("pick", help=pick_help, description=pick_help)
     pick.add_argument("path", type=Path, help="The video file to scrub through.")
@@ -446,6 +455,11 @@ def _dispatch(argv: Sequence[str] | None) -> int:
 
     if args.command == "templates":
         return _cmd_templates()
+
+    if args.command == "gui":
+        from .gui import main as gui_main
+
+        return gui_main([str(path) for path in args.paths])
 
     if args.command == "pick":
         return _cmd_pick(args)

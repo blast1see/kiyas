@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -317,3 +318,170 @@ def test_processing_order_is_documented_and_complete():
     transforming = {"trim", "crop", "resize", "tonemap", "luma_fix", "normalize_fps"}
 
     assert set(config.PROCESSING_ORDER) == transforming
+
+
+# --------------------------------------------------------------------------
+# Writing a project back out
+# --------------------------------------------------------------------------
+
+FULL = r"""
+title = "Round trip"
+engine = "ffmpeg"
+
+[frames]
+method = "count"
+count = 7
+skip_start = "5%"
+skip_end = "12.5%"
+b_frames_only = false
+skip_dark = true
+seed = 3
+
+[[source]]
+path = 'C:\media\a.mkv'
+name = "A"
+trim = 24
+crop = [0, 0, 140, 140]
+resize = [1920, 1080]
+tonemap = "hdr10"
+luma_fix = true
+normalize_fps = false
+
+[[source]]
+path = 'C:\media\b.mkv'
+name = "B"
+
+[output]
+directory = "out"
+index_dir = "idx"
+
+[tools]
+mpv = 'C:\Program Files\mpv\mpv.exe'
+"""
+
+
+def _round_trip(tmp_path, text: str):
+    """Load, write back out, load again."""
+    first = config.load(write(tmp_path, text))
+    rewritten = write(tmp_path, config.dumps(first), name="again.toml")
+    return first, config.load(rewritten)
+
+
+def test_a_project_survives_being_written_and_read_back(tmp_path):
+    """The GUI writes project files through dumps(), so this is what stops it
+    from quietly losing a setting somebody typed."""
+    first, second = _round_trip(tmp_path, FULL)
+
+    assert second.title == first.title
+    assert second.mode is first.mode
+    assert second.engine is first.engine
+    assert second.frames == first.frames
+    assert second.output == first.output
+    assert second.index_dir == first.index_dir
+    assert second.tools == first.tools
+
+
+def test_every_per_source_setting_survives(tmp_path):
+    first, second = _round_trip(tmp_path, FULL)
+
+    for before, after in zip(first.sources, second.sources, strict=True):
+        assert after == before, f"{before.name} changed"
+
+
+def test_windows_paths_survive_without_being_mangled(tmp_path):
+    """A basic TOML string would need every backslash doubled."""
+    _, second = _round_trip(tmp_path, FULL)
+
+    assert second.sources[0].path == Path(r"C:\media\a.mkv")
+    assert second.tools["mpv"] == r"C:\Program Files\mpv\mpv.exe"
+
+
+def test_a_settings_project_survives(tmp_path):
+    text = """
+    title = "Curves"
+    mode = "settings"
+
+    [[source]]
+    path = "a.mkv"
+    name = "the file"
+
+    [settings]
+    template = "tonemap"
+    width = 1280
+    fullscreen = false
+    """
+    first, second = _round_trip(tmp_path, text)
+
+    assert second.mode is Mode.SETTINGS
+    assert second.settings.width == 1280
+    assert [v.name for v in second.settings.variants] == [v.name for v in first.settings.variants]
+    assert [v.options for v in second.settings.variants] == [
+        v.options for v in first.settings.variants
+    ]
+
+
+def test_variants_are_written_out_rather_than_left_as_a_template(tmp_path):
+    """A template is a shorthand whose meaning can change between versions.
+
+    The written file has to record what was rendered, not the name of a set
+    that might expand differently next year.
+    """
+    project = config.load(
+        write(
+            tmp_path,
+            """
+            mode = "settings"
+            [[source]]
+            path = "a.mkv"
+            name = "f"
+            [settings]
+            template = "tonemap"
+            """,
+        )
+    )
+
+    text = config.dumps(project)
+
+    assert "template" not in text
+    assert text.count("[[variant]]") == len(project.settings.variants)
+
+
+def test_manual_frames_survive(tmp_path):
+    text = """
+    [[source]]
+    path = "a.mkv"
+    name = "A"
+    [[source]]
+    path = "b.mkv"
+    name = "B"
+    [frames]
+    method = "manual"
+    manual = [10, 500, 12345]
+    """
+    _, second = _round_trip(tmp_path, text)
+
+    assert second.frames.method is FrameMethod.MANUAL
+    assert second.frames.manual == (10, 500, 12345)
+
+
+def test_a_name_with_a_quote_in_it_survives(tmp_path):
+    """A literal TOML string cannot hold one, so it has to fall back."""
+    text = """
+    [[source]]
+    path = "a.mkv"
+    name = "Marty's cut"
+    [[source]]
+    path = "b.mkv"
+    name = "B"
+    """
+    _, second = _round_trip(tmp_path, text)
+
+    assert second.sources[0].name == "Marty's cut"
+
+
+def test_what_is_written_is_readable_toml(tmp_path):
+    import tomllib
+
+    project = config.load(write(tmp_path, FULL))
+
+    tomllib.loads(config.dumps(project))

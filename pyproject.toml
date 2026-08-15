@@ -60,8 +60,10 @@ build = ["pyinstaller>=6.12"]
 [project.scripts]
 kiyas = "kiyas.cli:main"
 
+# gui-scripts rather than scripts: on Windows this builds a launcher that does
+# not open a console window behind the application.
 [project.gui-scripts]
-kiyas-gui = "kiyas.gui.__main__:main"
+kiyas-gui = "kiyas.gui:main"
 
 [project.urls]
 Homepage = "https://github.com/blast1see/kiyas"

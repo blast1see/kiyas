@@ -12,9 +12,13 @@ core:
 |---|---|---|---|
 | Source | N files, one frame | VapourSynth | Which release is better? |
 | Settings | 1 file, one frame, N render configs | mpv | How should my player be configured? |
+| Audio | N tracks | ffmpeg | Which of these is the real master? |
 
 The settings mode is not a bonus feature. Tone-mapping curves and GLSL shaders
 only exist inside mpv, so VapourSynth cannot answer that question at all.
+
+All three write the same shape of output -- a directory per column, the same
+images in the same order, a manifest -- so publishing is written once.
 
 ## Language
 
@@ -68,6 +72,8 @@ audio/visuals.py    spectrogram, waveform, frequency response
 audio/sync.py       how far apart two tracks are
 audio/table.py      the specification table
 audio/run.py        orchestration for an audio comparison
+gui/window.py       the window: builds a project, calls the core
+gui/worker.py       running the core off the UI thread
 run.py              orchestration: config in, PNGs and a manifest out
 doctor.py           what this machine can do, and what is missing
 setup_env.py        installing the VapourSynth stack into this venv
@@ -111,10 +117,38 @@ a diagnostic that needs its own dependencies is worthless.
 
 ## The GUI has no privileges
 
-The GUI writes a project TOML and calls the same core the CLI calls. If a
-feature is only reachable through the GUI, that is a design error. Consequences
-worth keeping: project files are shareable and diffable, the core is testable
-without a display, and nothing has to be implemented twice.
+The window builds a project, writes it as TOML, and calls the same core the CLI
+calls. If a feature is only reachable through the window, that is a design
+error, and the way to tell is that you cannot describe it in a project file.
+Consequences worth keeping: project files are shareable and diffable, the core
+is testable without a display, and nothing has to be implemented twice.
+
+**It validates by round-tripping.** `build_project` writes the draft with
+`config.dumps` and reads it back with `config.parse`. Every rule in `config.py`
+therefore applies in the window for free, including the ones it has no widget
+for, and the message under the file list is the parser's own sentence. A second
+set of checks living in the GUI would drift out of step with the first, and the
+drift would show up as the window accepting something `kiyas run` rejects.
+
+- **`config.dumps` is the other half of `config.parse`,** and a round-trip test
+  holds them together. Paths go out as TOML *literal* strings: a Windows path
+  in a basic string needs every backslash doubled, and a project file people
+  edit by hand should not look like that.
+
+- **A QThread whose end is connected to `quit` with a queued connection only
+  stops while the UI event loop is spinning.** `quit` belongs to the main
+  thread, so the call sits in a queue nobody is reading exactly when the main
+  thread is waiting -- which is what closing the window mid-run does. It
+  deadlocked until the timeout: five seconds of frozen window on the way out,
+  and twenty seconds of test suite. The connection is direct;
+  `test_waiting_for_a_finished_task_returns_at_once` times it, because the
+  symptom of a regression is slowness and slow tests get shrugged at.
+
+- **Qt signals fire mid-construction.** `rowsInserted` arrives before the row's
+  cell widgets exist, so anything reading the table from a signal handler sees
+  a half-built row. Adding a row blocks signals until it is complete, and the
+  status line swallows everything: a label that fails to update is a much
+  smaller problem than a window that throws while somebody is typing.
 
 ## Testing
 
@@ -125,6 +159,8 @@ python -m ruff check . && python -m ruff format --check .
 python -m pytest -q                       # unit tests, no media needed
 python -m pytest -m integration           # needs FFmpeg
 python -m pytest -m vapoursynth           # needs 'kiyas setup' to have run
+python -m pytest -m mpv                   # needs mpv and a display
+QT_QPA_PLATFORM=offscreen python -m pytest -m gui   # needs PySide6, not a display
 ```
 
 Markers: `integration`, `vapoursynth`, `mpv`, `gui`, `live`. `live` talks to

@@ -9,8 +9,8 @@ screenshots from several sources, analyse audio, and publish the result to
 > **Status: usable.** Point it at two or more files and it writes frame-matched,
 > tonemapped screenshots and publishes them to slow.pics. Point it at one file
 > and a list of player settings and it renders that frame every way you asked
-> for. Point it at audio tracks and it measures them. The GUI is still to come.
-> See [Roadmap](#roadmap).
+> for. Point it at audio tracks and it measures them. There is a window if you
+> want one. See [Roadmap](#roadmap).
 
 ---
 
@@ -54,10 +54,12 @@ reads only that directory; `%APPDATA%/mpv` is not read, not merged and not
 written. Project files cannot set the options that would undo this. Shader
 files you name are read where they live, and never copied or modified.
 
-**The GUI has no privileges.** It writes a project TOML and calls the same core
-the CLI calls. Anything the GUI can do is reachable from the command line, the
-project file is shareable and diffable, and the core stays testable without a
-display.
+**The GUI has no privileges.** It builds a project, writes it as TOML, and
+calls the same core the CLI calls. Anything the window can do is reachable from
+the command line, the project file is shareable and diffable, and the core stays
+testable without a display. It also validates by writing the project out and
+reading it back through the ordinary parser, so it cannot accept something
+`kiyas run` would refuse -- and the message it shows you is that parser's.
 
 **Binaries resolve from absolute PATH entries only.** kiyas usually runs with
 the working directory set to wherever the media lives, so an `ffmpeg.exe`
@@ -121,6 +123,7 @@ kiyas publish out/        # upload it to slow.pics
 kiyas pick film.mkv       # choose frames by watching, in mpv
 kiyas templates           # list the built-in settings comparisons
 kiyas audio a.mkv b.mkv   # compare audio tracks
+kiyas gui                 # the same things, in a window
 ```
 
 A project is a TOML file. Six sources with individual crops, trims and
@@ -242,6 +245,24 @@ What it measures rather than reads off the header:
   correlation, with the peak-to-floor ratio reported so a weak match is visible
   as one.
 
+## The window
+
+```
+kiyas gui                     # empty, ready for files dropped onto it
+kiyas gui project.toml        # open a project
+kiyas gui a.mkv b.mkv         # start from these files
+pip install -e ".[gui]"       # if PySide6 is not installed yet
+```
+
+Drop files on it, pick what kind of comparison it is, press Run. It does the
+same three things the commands do -- source comparisons, settings comparisons,
+audio -- and saves what you set up as a project file you can run from a
+terminal, hand to someone else, or keep in a repository.
+
+The window never decides anything the command line cannot. What is on screen
+becomes a project, the project is written and read back through the same
+parser, and the sentence under the file list is whatever that parser said.
+
 ## Choosing frames by hand
 
 Automatic selection spreads captures evenly and avoids black frames, which is
@@ -283,7 +304,7 @@ publish that died halfway only sends what is missing.
 | 2 | slow.pics upload, forum markup | **done** |
 | 3 | mpv layer: portable config dir, frame picker, settings comparison | **done** |
 | 4 | Audio: spectrograms, waveforms, frequency response, bit depth, offset, metadata table | **done** |
-| 5 | PySide6 desktop interface | planned |
+| 5 | PySide6 desktop interface | **done** |
 | 6 | Packaging and release | planned |
 
 ## Credits

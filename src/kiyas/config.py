@@ -578,6 +578,118 @@ def parse(data: dict[str, Any], *, source_path: Path | None = None) -> Project:
     )
 
 
+# --------------------------------------------------------------------------
+# Writing one back out
+# --------------------------------------------------------------------------
+
+
+def _toml_string(value: str) -> str:
+    """Quote a string for TOML, preferring a literal.
+
+    Windows paths are full of backslashes, and in a basic TOML string every
+    one of them has to be doubled. A literal string takes them as they are,
+    which keeps a written project file readable by the person who has to edit
+    it later. Only a value containing a single quote needs the other form.
+    """
+    text = str(value)
+    if "'" not in text and "\n" not in text:
+        return f"'{text}'"
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    return f'"{escaped}"'
+
+
+def _percent(fraction: float) -> str:
+    return f"'{fraction * 100:g}%'"
+
+
+def dumps(project: Project) -> str:
+    """Render a project back to TOML.
+
+    The GUI writes project files through this, which is what keeps it from
+    growing privileges: whatever it can set, it sets by writing the same file
+    a person could have typed. ``parse(tomllib.loads(dumps(p)))`` gives back an
+    equivalent project, and a test holds that.
+
+    Defaults are written out rather than omitted. A file that lists what it is
+    doing can be edited by someone who has never read this module; one that
+    relies on defaults cannot be, without going and finding them.
+    """
+    lines: list[str] = ["# Written by kiyas.", ""]
+    if project.title:
+        lines.append(f"title = {_toml_string(project.title)}")
+    lines.append(f"mode = '{project.mode.value}'")
+    lines.append(f"engine = '{project.engine.value}'")
+    lines.append("")
+
+    frames = project.frames
+    lines.append("[frames]")
+    lines.append(f"method = '{frames.method.value}'")
+    if frames.method is FrameMethod.COUNT:
+        lines.append(f"count = {frames.count}")
+    elif frames.method is FrameMethod.INTERVAL:
+        lines.append(f"interval_seconds = {frames.interval_seconds:g}")
+    else:
+        lines.append(f"manual = [{', '.join(str(frame) for frame in frames.manual)}]")
+    lines.append(f"skip_start = {_percent(frames.skip_start)}")
+    lines.append(f"skip_end = {_percent(frames.skip_end)}")
+    lines.append(f"b_frames_only = {str(frames.b_frames_only).lower()}")
+    lines.append(f"skip_dark = {str(frames.skip_dark).lower()}")
+    if frames.seed is not None:
+        lines.append(f"seed = {frames.seed}")
+    lines.append("")
+
+    for source in project.sources:
+        lines.append("[[source]]")
+        lines.append(f"path = {_toml_string(source.path)}")
+        lines.append(f"name = {_toml_string(source.name)}")
+        if source.trim:
+            lines.append(f"trim = {source.trim}")
+        if source.crop:
+            lines.append(f"crop = [{', '.join(str(value) for value in source.crop)}]")
+        if source.resize:
+            lines.append(f"resize = [{source.resize[0]}, {source.resize[1]}]")
+        if source.tonemap is not Tonemap.AUTO:
+            lines.append(f"tonemap = '{source.tonemap.value}'")
+        if source.luma_fix:
+            lines.append("luma_fix = true")
+        if not source.normalize_fps:
+            lines.append("normalize_fps = false")
+        lines.append("")
+
+    if project.settings is not None:
+        lines.append("[settings]")
+        if project.settings.width:
+            lines.append(f"width = {project.settings.width}")
+        if project.settings.fullscreen:
+            lines.append("fullscreen = true")
+        lines.append("")
+        # Variants are written out one by one even when a template produced
+        # them. A template is a shorthand whose meaning can change between
+        # versions; the file records what was actually rendered.
+        for variant in project.settings.variants:
+            lines.append("[[variant]]")
+            lines.append(f"name = {_toml_string(variant.name)}")
+            options = ", ".join(
+                f"{name} = {_toml_string(value)}" for name, value in variant.options.items()
+            )
+            lines.append(f"options = {{ {options} }}")
+            lines.append("")
+
+    lines.append("[output]")
+    lines.append(f"directory = {_toml_string(project.output)}")
+    if project.index_dir is not None:
+        lines.append(f"index_dir = {_toml_string(project.index_dir)}")
+
+    if project.tools:
+        lines.append("")
+        lines.append("[tools]")
+        lines.extend(
+            f"{name} = {_toml_string(path)}" for name, path in sorted(project.tools.items())
+        )
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def load(path: str | Path) -> Project:
     """Read and validate a project file.
 

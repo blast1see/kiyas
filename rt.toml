@@ -1,0 +1,28 @@
+
+title = "Round trip"
+engine = "ffmpeg"
+[frames]
+method = "count"
+count = 7
+skip_start = "5%"
+skip_end = "12.5%"
+b_frames_only = false
+skip_dark = true
+seed = 3
+[[source]]
+path = 'C:\media.mkv'
+name = "A"
+trim = 24
+crop = [0, 0, 140, 140]
+resize = [1920, 1080]
+tonemap = "hdr10"
+luma_fix = true
+normalize_fps = false
+[[source]]
+path = 'C:\media.mkv'
+name = "B"
+[output]
+directory = "out"
+index_dir = "idx"
+[tools]
+mpv = 'C:\Program Files\mpv\mpv.exe'
