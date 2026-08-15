@@ -62,6 +62,12 @@ mpvctl/profile.py   the mpv configuration kiyas owns
 mpvctl/session.py   one mpv process, driven frame by frame
 mpvctl/variants.py  render variants and the built-in templates
 mpvctl/picker.py    choosing frames by watching the film
+audio/probe.py      what a track claims to be (ffprobe, MediaInfo)
+audio/analysis.py   what it actually contains, in one streaming pass
+audio/visuals.py    spectrogram, waveform, frequency response
+audio/sync.py       how far apart two tracks are
+audio/table.py      the specification table
+audio/run.py        orchestration for an audio comparison
 run.py              orchestration: config in, PNGs and a manifest out
 doctor.py           what this machine can do, and what is missing
 setup_env.py        installing the VapourSynth stack into this venv
@@ -263,6 +269,52 @@ consequence of that.
   `script`, `profile` and friends are refused, because a shared project file
   that quietly pulled in somebody's whole player configuration would still
   produce plausible-looking screenshots. See `FORBIDDEN_OPTIONS`.
+
+## Audio
+
+An audio comparison writes the same shape of output as a picture one -- a
+directory per track, the same images in the same order, a manifest -- so
+`kiyas publish` works on it unchanged. The manifest carries `labels` instead of
+`frames`, because its rows are analyses and a spectrogram has no timestamp.
+
+- **The decode is one streaming pass, in float.** A two-hour 5.1 track is about
+  eight gigabytes of samples. Everything -- peak, RMS, clipping, envelope, bit
+  depth, frequency response, channel duplication -- is accumulated chunk by
+  chunk from a single ffmpeg pipe. Float rather than 32-bit integers because
+  integers *clamp*: the English AC-3 track of a real Blu-ray peaks at **+2.31
+  dBFS**, and an integer decode would have hidden that behind a flat 0.0.
+
+- **A pipe hands over partial frames, and dropping them rotates the channels.**
+  `read(n)` returns at most n bytes. Discarding the remainder starts the next
+  read part-way through a frame, and from there every channel is shifted by
+  one -- which does not fail, it silently attributes the left channel's audio
+  to the right. It is invisible on mono files, so it survived the first round
+  of testing; what gave it away was a 1 kHz tone whose measured spectrum peaked
+  at DC. `analysis.analyse` carries the remainder forward.
+
+- **`showspectrumpic=mode=separate` crashes on multichannel audio.** ffmpeg
+  N-124864 died with an access violation in roughly two runs in five on a 5.1
+  track, at every image size, with and without the legend; `mode=combined` and
+  single-channel renders never crashed in any run. kiyas splits the stream and
+  renders one channel at a time inside the same graph, so it stays at one
+  decode, then lays the tiles out itself.
+
+- **Composing the spectrogram is not decoration.** ffmpeg's legend adds margins
+  per channel, so a 5.1 track and a stereo one come out different heights and
+  stop being comparable. And the tiles are drawn with the highest frequency in
+  the first row, so they go into `imshow` as `origin="upper"` -- flipping them
+  puts a 1 kHz tone at 22 kHz, which looks like a perfectly plausible
+  spectrogram of something else.
+
+- **The offset's sign is stated and tested.** `offset_ms > 0` means the second
+  track plays *later*. Backwards is worse than nothing: it corrects in the
+  wrong direction and doubles the error. Checked against a file delayed by a
+  known 250 ms, and the fallback's answer on a real pair matched an independent
+  GCC-PHAT measurement to 0.1 ms.
+
+- **Bit depth is refused for lossy codecs.** A lossy decoder emits float that
+  uses every bit whatever the source was, so "24-bit" there would be a
+  measurement of the decoder. Saying "not measurable" is the honest answer.
 
 ## Publishing
 

@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from .manifest import Comparison, ComparisonFrame, ComparisonSource, load_manifest
+from .manifest import Comparison, ComparisonRow, ComparisonSource, load_manifest
 
-__all__ = ["Comparison", "ComparisonFrame", "ComparisonSource", "load_manifest"]
+__all__ = ["Comparison", "ComparisonRow", "ComparisonSource", "load_manifest"]

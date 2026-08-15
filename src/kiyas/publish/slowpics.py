@@ -99,15 +99,15 @@ def build_payload(
     if comparison.is_comparison:
         payload |= {"canvasMode": "none", "imageFit": "none"}
 
-    for index, frame in enumerate(comparison.frames):
+    for index, row in enumerate(comparison.rows):
         if comparison.is_comparison:
-            payload[f"comparisons[{index}].name"] = frame.label
+            payload[f"comparisons[{index}].name"] = row.label
             payload[f"comparisons[{index}].hentai"] = str(nsfw).lower()
             for source_index, source in enumerate(comparison.sources):
                 payload[f"comparisons[{index}].images[{source_index}].name"] = source.name
         else:
             source = comparison.sources[0]
-            payload[f"images[{index}].name"] = f"{frame.label} - {source.name}"
+            payload[f"images[{index}].name"] = f"{row.label} - {source.name}"
 
     if tmdb_id:
         payload["tmdbId"] = tmdb_id
@@ -121,13 +121,13 @@ def build_hashes(comparison: Comparison) -> dict[str, str]:
     one", so a re-run after a failed upload only sends what is missing.
     """
     hashes: dict[str, str] = {}
-    for frame_index in range(len(comparison.frames)):
+    for row_index in range(len(comparison.rows)):
         for source_index, source in enumerate(comparison.sources):
-            path = source.images[frame_index]
+            path = source.images[row_index]
             key = (
-                f"comparisons[{frame_index}].images[{source_index}].hashSum"
+                f"comparisons[{row_index}].images[{source_index}].hashSum"
                 if comparison.is_comparison
-                else f"images[{frame_index}].hashSum"
+                else f"images[{row_index}].hashSum"
             )
             hashes[key] = _digest(path)
     return hashes
@@ -146,17 +146,17 @@ def _images_to_send(comparison: Comparison, response: dict) -> list[tuple[str, P
 
     pending: list[tuple[str, Path]] = []
     for source_index, source in enumerate(comparison.sources):
-        for frame_index, path in enumerate(source.images):
+        for row_index, path in enumerate(source.images):
             try:
                 image_uuid = (
-                    grid[frame_index][source_index]
+                    grid[row_index][source_index]
                     if comparison.is_comparison
-                    else grid[0][frame_index]
+                    else grid[0][row_index]
                 )
             except (IndexError, TypeError) as exc:
                 raise UploadError(
                     f"slow.pics returned an image grid that does not match the "
-                    f"comparison ({len(grid)} rows for {len(comparison.frames)} frames)"
+                    f"comparison ({len(grid)} rows for {len(comparison.rows)} expected)"
                 ) from exc
             if image_uuid not in already:
                 pending.append((image_uuid, path))

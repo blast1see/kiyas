@@ -97,7 +97,7 @@ class VideoInfo:
         return f"{self.width}x{self.height}"
 
 
-def _run_ffprobe(args: list[str], *, ffprobe: Path) -> dict:
+def run_ffprobe(args: list[str], *, ffprobe: Path) -> dict:
     try:
         proc = subprocess.run(  # noqa: S603
             [str(ffprobe), *args],
@@ -176,7 +176,7 @@ def probe(path: str | Path, *, ffprobe: str | Path | None = None) -> VideoInfo:
         raise ProbeError(f"no such file: {path}")
 
     binary = binaries.require_binary("ffprobe", ffprobe)
-    data = _run_ffprobe(
+    data = run_ffprobe(
         [
             "-v",
             "error",

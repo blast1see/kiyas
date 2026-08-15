@@ -9,7 +9,8 @@ screenshots from several sources, analyse audio, and publish the result to
 > **Status: usable.** Point it at two or more files and it writes frame-matched,
 > tonemapped screenshots and publishes them to slow.pics. Point it at one file
 > and a list of player settings and it renders that frame every way you asked
-> for. Audio analysis and the GUI are still to come. See [Roadmap](#roadmap).
+> for. Point it at audio tracks and it measures them. The GUI is still to come.
+> See [Roadmap](#roadmap).
 
 ---
 
@@ -119,6 +120,7 @@ kiyas run project.toml    # produce the comparison
 kiyas publish out/        # upload it to slow.pics
 kiyas pick film.mkv       # choose frames by watching, in mpv
 kiyas templates           # list the built-in settings comparisons
+kiyas audio a.mkv b.mkv   # compare audio tracks
 ```
 
 A project is a TOML file. Six sources with individual crops, trims and
@@ -210,6 +212,36 @@ bigger than your display, so a 4K source is captured smaller unless you set
 because a comparison produced at a different resolution than the last one is
 not comparable with it.
 
+## Audio
+
+```
+kiyas audio original.mkv dubbed.mkv
+kiyas audio a.mkv b.mkv --track 1        # a different audio stream from each file
+kiyas audio a.mkv b.mkv --publish        # upload it like any other comparison
+```
+
+Each track gets a spectrogram, a waveform with clipping marked, and an average
+frequency response — laid out identically so they can be flipped between — plus
+a specification table in Markdown and BBCode, and the offset between the tracks.
+
+What it measures rather than reads off the header:
+
+- **Real bit depth.** A 24-bit container holding 16-bit content is common and
+  nothing in the header says so. Refused for lossy codecs, where the answer
+  would be a measurement of the decoder rather than the file.
+- **Clipping**, counted as runs of consecutive full-scale samples. One sample at
+  full scale happens in any loud master; three in a row does not.
+- **Silent channels**, which is what a fake 5.1 upmix looks like from the inside.
+- **Identical channels**, which is what a mono dub in a stereo container looks
+  like — and what a frequency-response plot cannot show you, because the two
+  curves lie exactly on top of each other.
+- **The offset**, because comparing two tracks that are not aligned measures the
+  misalignment and nothing else. `+250 ms` means the second track plays *later*.
+  [AudioSyncTool](https://github.com/blast1see/AudioSyncTool) is used when it is
+  installed and its drift fit is wanted; otherwise a single GCC-PHAT
+  correlation, with the peak-to-floor ratio reported so a weak match is visible
+  as one.
+
 ## Choosing frames by hand
 
 Automatic selection spreads captures evenly and avoids black frames, which is
@@ -250,7 +282,7 @@ publish that died halfway only sends what is missing.
 | 1 | Source model, project TOML, frame selection, VapourSynth + ffmpeg engines, tonemapping | **done** |
 | 2 | slow.pics upload, forum markup | **done** |
 | 3 | mpv layer: portable config dir, frame picker, settings comparison | **done** |
-| 4 | Audio: spectrograms, waveforms, frequency response, bit depth, offset, metadata table | planned |
+| 4 | Audio: spectrograms, waveforms, frequency response, bit depth, offset, metadata table | **done** |
 | 5 | PySide6 desktop interface | planned |
 | 6 | Packaging and release | planned |
 

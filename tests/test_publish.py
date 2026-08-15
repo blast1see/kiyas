@@ -16,7 +16,7 @@ import pytest
 
 from kiyas.publish import bbcode, load_manifest, slowpics
 from kiyas.publish.bbcode import BBCodeError
-from kiyas.publish.manifest import Comparison, ComparisonFrame, ManifestError
+from kiyas.publish.manifest import Comparison, ComparisonRow, ManifestError
 from kiyas.publish.slowpics import UploadError
 
 # --------------------------------------------------------------------------
@@ -103,24 +103,31 @@ def test_uneven_sources_are_refused(tmp_path):
         load_manifest(directory)
 
 
-def test_frame_rate_is_not_rounded(tmp_path):
-    comparison = load_manifest(_make_output(tmp_path))
-
-    assert comparison.frames[0].fps == Fraction(24000, 1001)
-
-
 def test_timestamps_use_the_real_frame_rate():
-    frame = ComparisonFrame(number=24000, fps=Fraction(24000, 1001))
+    row = ComparisonRow.for_frame(24000, Fraction(24000, 1001))
 
     # 24000 frames at 24000/1001 fps is 1001 seconds, not 1000.
-    assert frame.timestamp == "0:16:41.000"
+    assert row.label.startswith("0:16:41.000")
 
 
 def test_frame_label_carries_both_time_and_number():
-    label = ComparisonFrame(number=1234, fps=Fraction(24)).label
+    label = ComparisonRow.for_frame(1234, Fraction(24)).label
 
     assert "1234" in label
     assert ":" in label
+
+
+def test_a_manifest_with_labels_uses_them_instead_of_timestamps(tmp_path):
+    """An audio comparison's rows are analyses; a timestamp would be a lie."""
+    directory = _make_output(tmp_path, frames=(0, 1))
+    manifest = directory / "kiyas-manifest.json"
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["labels"] = ["Spectrogram", "Waveform"]
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+    comparison = load_manifest(directory)
+
+    assert [row.label for row in comparison.rows] == ["Spectrogram", "Waveform"]
 
 
 # --------------------------------------------------------------------------

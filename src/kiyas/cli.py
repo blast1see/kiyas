@@ -67,6 +67,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--publish", action="store_true", help="Upload to slow.pics when the run finishes."
     )
 
+    audio_help = "Compare the audio tracks of two or more files."
+    audio = sub.add_parser("audio", help=audio_help, description=audio_help)
+    audio.add_argument("paths", nargs="+", type=Path, help="The files to compare.")
+    audio.add_argument(
+        "--output", type=Path, default=Path("audio-out"), help="Where to write the comparison."
+    )
+    audio.add_argument("--title", default="", help="Comparison title.")
+    audio.add_argument(
+        "--track",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Which audio stream to take from each file. Default: the first.",
+    )
+    audio.add_argument(
+        "--publish", action="store_true", help="Upload to slow.pics when the analysis finishes."
+    )
+
     publish_help = "Upload an already-produced comparison to slow.pics."
     publish = sub.add_parser("publish", help=publish_help, description=publish_help)
     publish.add_argument(
@@ -156,6 +174,55 @@ def _cmd_run(args) -> int:
     return 0
 
 
+def _cmd_audio(args) -> int:
+    from rich.console import Console
+    from rich.markup import escape
+
+    from .audio import AnalysisError
+    from .audio import run as audio_run
+    from .media.probe import ProbeError
+
+    console = Console()
+    output = args.output.expanduser().resolve()
+
+    status = console.status("starting")
+    status.start()
+    try:
+        result = audio_run.run(
+            [Path(path).expanduser() for path in args.paths],
+            output=output,
+            title=args.title,
+            track_index=args.track,
+            progress=lambda text: status.update(escape(text)),
+        )
+    except (AnalysisError, ProbeError) as exc:
+        status.stop()
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        return 1
+    finally:
+        status.stop()
+
+    for warning in result.warnings:
+        console.print(f"[yellow]warning:[/yellow] {escape(warning)}")
+
+    console.print()
+    console.print(
+        f"[green]{result.image_count} images[/green] "
+        f"({len(audio_run.ANALYSES)} analyses x {len(result.tracks)} tracks)"
+    )
+    for offset in result.offsets:
+        console.print(f"  offset: {escape(offset.summary)}")
+    for track in result.tracks:
+        console.print(f"  {escape(track.name)} -> {escape(str(track.directory))}")
+    console.print(f"\nspecifications: {escape(str(result.specifications))}")
+    console.print(f"manifest: {escape(str(result.manifest))}")
+
+    if args.publish:
+        console.print()
+        return _cmd_publish(_publish_defaults(), directory=output)
+    return 0
+
+
 def _publish_defaults():
     """Publishing options for `run --publish`.
 
@@ -195,7 +262,7 @@ def _cmd_publish(args, *, directory: Path | None = None) -> int:
     console.print(
         f"publishing [bold]{escape(comparison.title)}[/bold]: "
         f"{comparison.total_images} images, "
-        f"{len(comparison.frames)} frames x {len(comparison.sources)} sources"
+        f"{len(comparison.rows)} rows x {len(comparison.sources)} sources"
     )
 
     status = console.status("preparing")
@@ -360,6 +427,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "run":
         return _cmd_run(args)
+
+    if args.command == "audio":
+        return _cmd_audio(args)
 
     if args.command == "publish":
         return _cmd_publish(args)

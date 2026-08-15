@@ -23,21 +23,24 @@ class ManifestError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class ComparisonFrame:
-    number: int
-    fps: Fraction
+class ComparisonRow:
+    """One row of the published grid: the same thing seen in every source.
 
-    @property
-    def timestamp(self) -> str:
-        """``H:MM:SS.mmm``, which is how slow.pics labels a comparison."""
-        seconds = self.number / float(self.fps)
+    Usually a frame, in which case the label is its timestamp and number. An
+    audio comparison's rows are analyses -- a spectrogram, a waveform -- and
+    carry their own label instead. The publishing layer only ever needs the
+    label, so the two kinds do not have to be told apart below this line.
+    """
+
+    label: str
+
+    @classmethod
+    def for_frame(cls, number: int, fps: Fraction) -> ComparisonRow:
+        """``H:MM:SS.mmm / N``, which is how slow.pics labels a comparison."""
+        seconds = number / float(fps)
         hours, remainder = divmod(seconds, 3600)
         minutes, secs = divmod(remainder, 60)
-        return f"{int(hours)}:{int(minutes):02d}:{secs:06.3f}"
-
-    @property
-    def label(self) -> str:
-        return f"{self.timestamp} / {self.number}"
+        return cls(f"{int(hours)}:{int(minutes):02d}:{secs:06.3f} / {number}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +52,7 @@ class ComparisonSource:
 @dataclass(frozen=True, slots=True)
 class Comparison:
     title: str
-    frames: tuple[ComparisonFrame, ...]
+    rows: tuple[ComparisonRow, ...]
     sources: tuple[ComparisonSource, ...]
     directory: Path
 
@@ -96,8 +99,15 @@ def load_manifest(path: str | Path) -> Comparison:
     except (ValueError, ZeroDivisionError):
         fps = Fraction(24000, 1001)
 
-    frame_numbers = payload.get("frames") or []
-    frames = tuple(ComparisonFrame(int(n), fps) for n in frame_numbers)
+    # Explicit labels win. A run that has them -- an audio comparison, whose
+    # rows are analyses rather than moments -- has nothing sensible to say
+    # about frame numbers, and inventing a timestamp for a spectrogram would
+    # put a lie in the published labels.
+    labels = payload.get("labels")
+    if labels:
+        rows = tuple(ComparisonRow(str(label)) for label in labels)
+    else:
+        rows = tuple(ComparisonRow.for_frame(int(n), fps) for n in payload.get("frames") or [])
 
     sources: list[ComparisonSource] = []
     for entry in payload["sources"]:
@@ -110,7 +120,7 @@ def load_manifest(path: str | Path) -> Comparison:
 
     comparison = Comparison(
         title=payload.get("title", "") or directory.name,
-        frames=frames,
+        rows=rows,
         sources=tuple(sources),
         directory=directory,
     )
@@ -128,12 +138,12 @@ def _validate(comparison: Comparison) -> None:
     Catching it here is the difference between an error and a wrong answer.
     """
     counts = {source.name: len(source.images) for source in comparison.sources}
-    expected = len(comparison.frames)
+    expected = len(comparison.rows)
 
     if expected and any(count != expected for count in counts.values()):
         raise ManifestError(
-            f"the manifest lists {expected} frames but the sources have "
-            f"{counts}. Every source needs an image for every frame, or the "
+            f"the manifest lists {expected} rows but the sources have "
+            f"{counts}. Every source needs an image for every row, or the "
             f"comparison columns will not line up."
         )
 
