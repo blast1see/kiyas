@@ -51,9 +51,22 @@ jobs:
       # skips its way to green is not a suite. Installed through the runner's
       # own package manager rather than a third-party action: this is the part
       # nobody notices has stopped working.
-      - name: ffmpeg (Linux)
+      - name: ffmpeg and Qt's system libraries (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        # Qt needs these even with the offscreen platform: importing
+        # PySide6 succeeds without them and importing QtWidgets does not.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ffmpeg \
+            libegl1 \
+            libgl1 \
+            libxkbcommon-x11-0 \
+            libdbus-1-3 \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-keysyms1 \
+            libxcb-shape0
 
       - name: ffmpeg (Windows)
         if: runner.os == 'Windows'

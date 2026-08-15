@@ -19,7 +19,12 @@ import pytest
 
 pytestmark = pytest.mark.gui
 
-pytest.importorskip("PySide6", reason="the desktop interface needs PySide6")
+# QtWidgets, not PySide6: importing the package succeeds on a machine that
+# cannot actually run Qt. The extension module is what needs libEGL and the
+# rest of the system libraries, so it is what has to be probed -- otherwise a
+# bare Linux box fails at collection instead of skipping. Found by CI on the
+# first push, which is what a second operating system is for.
+pytest.importorskip("PySide6.QtWidgets", reason="the desktop interface needs a working PySide6")
 
 # Must be set before QApplication is constructed.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
