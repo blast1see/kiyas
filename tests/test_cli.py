@@ -65,3 +65,63 @@ def test_setup_upgrade_flag_is_parsed():
 
     assert args.command == "setup"
     assert args.upgrade is True
+
+
+def test_templates_subcommand_is_registered():
+    parser = cli.build_parser()
+    args = parser.parse_args(["templates"])
+
+    assert args.command == "templates"
+
+
+def test_templates_lists_every_template(capsys):
+    from kiyas.mpvctl.variants import TEMPLATES
+
+    assert cli.main(["templates"]) == 0
+
+    printed = capsys.readouterr().out
+    for name in TEMPLATES:
+        assert name in printed
+
+
+def test_pick_subcommand_takes_a_file_and_a_start_frame():
+    parser = cli.build_parser()
+    args = parser.parse_args(["pick", "film.mkv", "--start", "1200"])
+
+    assert args.command == "pick"
+    assert args.path.name == "film.mkv"
+    assert args.start == 1200
+
+
+def test_pick_on_a_missing_file_fails_before_starting_a_player(tmp_path, capsys):
+    code = cli.main(["pick", str(tmp_path / "nope.mkv")])
+
+    assert code == 2
+    assert "no such file" in capsys.readouterr().out
+
+
+def test_init_can_scaffold_a_settings_comparison(tmp_path, capsys):
+    path = tmp_path / "settings.toml"
+
+    assert cli.main(["init", str(path), "--settings"]) == 0
+
+    text = path.read_text(encoding="utf-8")
+    assert 'mode = "settings"' in text
+    assert "[settings]" in text
+    assert "template" in text
+
+
+def test_the_scaffolded_settings_project_is_valid_apart_from_the_paths(tmp_path):
+    """A starter file that does not parse is worse than no starter file."""
+    import tomllib
+
+    from kiyas import config
+
+    path = tmp_path / "settings.toml"
+    cli.main(["init", str(path), "--settings"])
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+
+    project = config.parse(data)
+
+    assert project.mode.value == "settings"
+    assert len(project.settings.variants) > 1

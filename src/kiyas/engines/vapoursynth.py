@@ -18,13 +18,13 @@ from __future__ import annotations
 
 import contextlib
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from fractions import Fraction
 from pathlib import Path
 
 from ..config import Source, Tonemap
 from ..media.probe import HdrFormat, VideoInfo, probe
-from .base import ACTIVE_AREA, EngineError
+from .base import ACTIVE_AREA, EngineError, RenderSettings
 
 #: lsmas and BestSource report indexing progress through VapourSynth's logger,
 #: one message per percent. Left alone that is 200 lines of noise per source,
@@ -227,7 +227,9 @@ class VapourSynthSource:
 class VapourSynthEngine:
     name = "vapoursynth"
 
-    def available(self) -> bool:
+    def available(self, tools: Mapping[str, str] | None = None) -> bool:
+        # tools is ignored: this engine is a Python import, not an executable.
+        _ = tools
         try:
             import vapoursynth as vs
 
@@ -408,12 +410,19 @@ class VapourSynthEngine:
         tools: dict[str, str] | None = None,
         progress: Callable[[str], None] | None = None,
         index_dir: Path | None = None,
+        render: RenderSettings | None = None,
     ) -> VapourSynthSource:
         import vapoursynth as vs
 
         core = vs.core
         tools = tools or {}
 
+        if render is not None:
+            raise EngineError(
+                f"{source.name}: the VapourSynth engine cannot render one frame several "
+                f"different ways. Tone-mapping curves and GLSL shaders only exist inside a "
+                f"player, so a settings comparison is mpv's job."
+            )
         if not source.path.is_file():
             raise EngineError(f"{source.name}: no such file: {source.path}")
 

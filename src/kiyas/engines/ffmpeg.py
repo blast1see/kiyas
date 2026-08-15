@@ -23,14 +23,14 @@ for a thousand.
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from fractions import Fraction
 from pathlib import Path
 
 from ..config import Source, Tonemap
 from ..media import binaries
 from ..media.probe import HdrFormat, VideoInfo, probe
-from .base import ACTIVE_AREA, EngineError
+from .base import ACTIVE_AREA, EngineError, RenderSettings
 
 #: Decoding a single frame from a keyframe boundary; a slow disk and a long GOP
 #: can make this take a while, but not this long.
@@ -322,8 +322,9 @@ class FfmpegSource:
 class FfmpegEngine:
     name = "ffmpeg"
 
-    def available(self) -> bool:
-        return binaries.find_binary("ffmpeg") is not None
+    def available(self, tools: Mapping[str, str] | None = None) -> bool:
+        tools = tools or {}
+        return binaries.find_binary("ffmpeg", tools.get("ffmpeg")) is not None
 
     def _tonemap_mode(self, source: Source, info: VideoInfo) -> Tonemap:
         if source.tonemap is not Tonemap.AUTO:
@@ -344,9 +345,16 @@ class FfmpegEngine:
         tools: dict[str, str] | None = None,
         progress: Callable[[str], None] | None = None,
         index_dir: Path | None = None,
+        render: RenderSettings | None = None,
     ) -> FfmpegSource:
         # index_dir is ignored: this engine seeks per frame and builds no index.
         tools = tools or {}
+        if render is not None:
+            raise EngineError(
+                f"{source.name}: the ffmpeg engine cannot render one frame several different "
+                f"ways. Tone-mapping curves and GLSL shaders only exist inside a player, so a "
+                f"settings comparison is mpv's job."
+            )
         if not source.path.is_file():
             raise EngineError(f"{source.name}: no such file: {source.path}")
 

@@ -20,6 +20,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from .mpvctl.variants import TEMPLATES, Variant, VariantError, expand_template, normalise_options
+
 
 class ConfigError(ValueError):
     """Raised when a project file cannot be understood."""
@@ -313,6 +315,123 @@ class FrameSelection:
 
 
 @dataclass(slots=True)
+class Settings:
+    """A settings comparison: one file, rendered several ways.
+
+    ``width`` is the capture width in pixels; the height follows the source's
+    aspect ratio so no letterbox bars end up in the picture. mpv renders into a
+    window and a window cannot exceed the display, so a 4K source captures at
+    less than 4K unless ``fullscreen`` is set -- and even then, at the screen's
+    resolution. The size actually produced is reported after the run.
+    """
+
+    variants: list[Variant]
+    width: int | None = None
+    fullscreen: bool = False
+
+    _KEYS = {"template", "width", "fullscreen", "base", "shaders"}
+
+    @classmethod
+    def parse(cls, table: Any, variant_tables: Any) -> Settings:
+        where = "[settings]"
+        if not isinstance(table, dict):
+            raise ConfigError(f"{where}: must be a table")
+        _unknown_keys(table, cls._KEYS, where)
+
+        try:
+            base = normalise_options(table.get("base", {}), f"{where}.base")
+        except VariantError as exc:
+            raise ConfigError(str(exc)) from None
+
+        variants: list[Variant] = []
+        if "template" in table:
+            name = table["template"]
+            if not isinstance(name, str) or not name.strip():
+                raise ConfigError(f"{where}: 'template' must be the name of a template")
+            try:
+                variants.extend(expand_template(name.strip(), table))
+            except VariantError as exc:
+                raise ConfigError(f"{where}: {exc}") from None
+
+        if variant_tables is not None:
+            if not isinstance(variant_tables, list):
+                raise ConfigError("project: [[variant]] entries must be tables")
+            for index, entry in enumerate(variant_tables, start=1):
+                variants.append(_parse_variant(entry, index))
+
+        if len(variants) < 2:
+            raise ConfigError(
+                "a settings comparison needs at least two variants. Add [[variant]] entries, "
+                f"or set a template in [settings] (available: {', '.join(sorted(TEMPLATES))})."
+            )
+
+        names = [v.name for v in variants]
+        duplicates = sorted({n for n in names if names.count(n) > 1})
+        if duplicates:
+            raise ConfigError(
+                f"project: variant names must be unique, but "
+                f"{', '.join(repr(d) for d in duplicates)} appears more than once. "
+                f"Names become the comparison's column labels."
+            )
+
+        settings = cls(variants=[v.merged(base) for v in variants])
+        if "width" in table:
+            settings.width = _int(table["width"], where, "width", minimum=16)
+        if "fullscreen" in table:
+            settings.fullscreen = _bool(table["fullscreen"], where, "fullscreen")
+        return settings
+
+    def resolve_shaders(self, base: Path) -> None:
+        """Make shader paths absolute, relative to the project file.
+
+        Shader files are read where they live and are never copied or edited.
+        Checking they exist here rather than letting mpv fail at startup is
+        worth the few lines: mpv's complaint about a missing shader arrives as
+        one line of player log inside a failed capture, and a typo in a path is
+        much easier to see spelled out.
+        """
+        for variant in self.variants:
+            raw = variant.options.get("glsl-shaders")
+            if not raw:
+                continue
+            resolved = []
+            for entry in raw.split(","):
+                if not entry.strip():
+                    continue
+                path = Path(entry.strip()).expanduser()
+                if not path.is_absolute():
+                    path = (base / path).resolve()
+                if not path.is_file():
+                    raise ConfigError(f"variant {variant.name!r}: no shader at {path}")
+                resolved.append(path.as_posix())
+            variant.options["glsl-shaders"] = ",".join(resolved)
+
+
+def _parse_variant(table: Any, index: int) -> Variant:
+    where = f"variant #{index}"
+    if not isinstance(table, dict):
+        raise ConfigError(f"{where}: each [[variant]] must be a table")
+    _unknown_keys(table, {"name", "options"}, where)
+
+    name = table.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ConfigError(
+            f"{where}: 'name' is required. It labels the column in the published comparison, "
+            f"so 'st2094-40' is worth more than 'variant 3'."
+        )
+    try:
+        options = normalise_options(table.get("options", {}), f"{where} ({name.strip()!r})")
+    except VariantError as exc:
+        raise ConfigError(str(exc)) from None
+    if not options:
+        raise ConfigError(
+            f"{where} ({name.strip()!r}): 'options' is required and must set at least one mpv "
+            f"option. A variant that changes nothing renders the same picture as its neighbour."
+        )
+    return Variant(name.strip(), options)
+
+
+@dataclass(slots=True)
 class Project:
     mode: Mode
     title: str
@@ -322,13 +441,31 @@ class Project:
     output: Path = Path("out")
     index_dir: Path | None = None
     tools: dict[str, str] = field(default_factory=dict)
+    settings: Settings | None = None
     source_path: Path | None = None
 
-    _KEYS = {"mode", "title", "engine", "source", "frames", "output", "tools"}
+    _KEYS = {
+        "mode",
+        "title",
+        "engine",
+        "source",
+        "frames",
+        "output",
+        "tools",
+        "settings",
+        "variant",
+    }
 
     @property
     def source_names(self) -> list[str]:
         return [source.name for source in self.sources]
+
+    @property
+    def column_names(self) -> list[str]:
+        """What the comparison's columns are called, whichever mode it is."""
+        if self.settings is not None:
+            return [variant.name for variant in self.settings.variants]
+        return self.source_names
 
 
 def _parse_output(table: Any) -> tuple[Path, Path | None]:
@@ -389,6 +526,22 @@ def parse(data: dict[str, Any], *, source_path: Path | None = None) -> Project:
             "project: a source comparison needs at least two [[source]] entries. "
             "For one file rendered several ways, use mode = 'settings'."
         )
+    if mode is Mode.SETTINGS and len(sources) != 1:
+        raise ConfigError(
+            f"project: a settings comparison renders one file several ways, so it takes exactly "
+            f"one [[source]]; this one has {len(sources)}. To compare different files, use "
+            f"mode = 'source'."
+        )
+
+    settings = None
+    has_settings_tables = "settings" in data or "variant" in data
+    if mode is Mode.SETTINGS:
+        settings = Settings.parse(data.get("settings", {}), data.get("variant"))
+    elif has_settings_tables:
+        raise ConfigError(
+            "project: [settings] and [[variant]] only mean something with mode = 'settings'. "
+            "In a source comparison the columns are the files themselves."
+        )
 
     duplicates = sorted(
         {n for n in (s.name for s in sources) if [x.name for x in sources].count(n) > 1}
@@ -404,15 +557,23 @@ def parse(data: dict[str, Any], *, source_path: Path | None = None) -> Project:
         raise ConfigError("[frames]: must be a table")
 
     output, index_dir = _parse_output(data.get("output", {}))
+    frames = FrameSelection.parse(frames_table)
+    if mode is Mode.SETTINGS and frames.b_frames_only:
+        # Every column is the same decoded frame, so there is no encode to
+        # flatter and nothing to be fair about. Insisting on a B-frame here
+        # would only throw away positions for no benefit.
+        frames.b_frames_only = False
+
     return Project(
         mode=mode,
         title=title.strip(),
         sources=sources,
-        frames=FrameSelection.parse(frames_table),
+        frames=frames,
         engine=_enum(data.get("engine", "auto"), Engine, "project", "engine"),
         output=output,
         index_dir=index_dir,
         tools=_parse_tools(data.get("tools", {})),
+        settings=settings,
         source_path=source_path,
     )
 
@@ -451,5 +612,10 @@ def load(path: str | Path) -> Project:
         project.output = (base / project.output).resolve()
     if project.index_dir is not None and not project.index_dir.is_absolute():
         project.index_dir = (base / project.index_dir).resolve()
+    if project.settings is not None:
+        try:
+            project.settings.resolve_shaders(base)
+        except ConfigError as exc:
+            raise ConfigError(f"{path}: {exc}") from None
 
     return project

@@ -21,8 +21,8 @@ from fractions import Fraction
 from pathlib import Path
 
 from . import engines
-from .config import Engine, FrameMethod, Project
-from .engines.base import DARK_LUMA_THRESHOLD, EngineError
+from .config import Engine, FrameMethod, Mode, Project, Source
+from .engines.base import DARK_LUMA_THRESHOLD, EngineError, RenderSettings
 from .frames import selector
 from .media.probe import probe
 
@@ -60,6 +60,9 @@ class SourceResult:
     directory: Path
     files: list[Path]
     source_path: Path
+    #: The render options this column was produced with, in a settings
+    #: comparison. Empty for a source comparison.
+    options: dict[str, str] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
 
@@ -82,9 +85,27 @@ class RunError(RuntimeError):
 
 
 def choose_engine(project: Project) -> str:
-    available = engines.available_engines()
+    available = engines.available_engines(project.tools)
     if not available:
         raise RunError("no frame engine is available. Run 'kiyas doctor' to see what is missing.")
+
+    if project.mode is Mode.SETTINGS:
+        # Not a preference. Tone-mapping curves and GLSL shaders live inside a
+        # player's renderer, so this comparison cannot be produced any other
+        # way -- honouring `engine = "vapoursynth"` here would mean rendering
+        # every variant identically and calling it a result.
+        if "mpv" not in available:
+            raise RunError(
+                "a settings comparison needs mpv, which was not found. It is the only engine "
+                "that can render the same frame with different tone-mapping curves or shaders. "
+                "Run 'kiyas doctor' to see how to point kiyas at it."
+            )
+        if project.engine not in (Engine.AUTO, Engine.MPV):
+            raise RunError(
+                f"mode = 'settings' always renders with mpv, so engine = "
+                f"'{project.engine.value}' cannot be honoured. Remove the engine line."
+            )
+        return "mpv"
 
     if project.engine is Engine.AUTO:
         return available[0]
@@ -96,6 +117,31 @@ def choose_engine(project: Project) -> str:
             f"Run 'kiyas doctor' for details."
         )
     return wanted
+
+
+def columns(project: Project) -> list[tuple[Source, RenderSettings | None]]:
+    """What the comparison's columns are, and how each one is produced.
+
+    A source comparison has one column per file and no render settings. A
+    settings comparison has one file and one column per variant. Everything
+    downstream works on this list, so the two modes only differ here.
+    """
+    if project.settings is None:
+        return [(source, None) for source in project.sources]
+
+    source = project.sources[0]
+    return [
+        (
+            source,
+            RenderSettings(
+                name=variant.name,
+                options=dict(variant.options),
+                width=project.settings.width,
+                fullscreen=project.settings.fullscreen,
+            ),
+        )
+        for variant in project.settings.variants
+    ]
 
 
 def _acceptability(prepared: list, project: Project, warnings: list[str]):
@@ -138,6 +184,7 @@ def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:
     warnings: list[str] = []
     engine_name = choose_engine(project)
     engine = engines.get_engine(engine_name)
+    plan = columns(project)
 
     missing = [s.path for s in project.sources if not s.path.is_file()]
     if missing:
@@ -153,9 +200,9 @@ def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:
 
     prepared = []
     try:
-        for source in project.sources:
+        for source, render in plan:
             if progress:
-                progress(f"opening {source.name}")
+                progress(f"opening {render.name if render else source.name}")
             try:
                 prepared.append(
                     engine.prepare(
@@ -165,14 +212,11 @@ def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:
                         tools=project.tools,
                         progress=progress,
                         index_dir=project.index_dir,
+                        render=render,
                     )
                 )
             except EngineError as exc:
                 raise RunError(str(exc)) from exc
-
-        for item in prepared:
-            for note in getattr(item, "assumptions", []):
-                warnings.append(f"{item.name}: {note}")
 
         labelled = {p.has_overlay for p in prepared}
         if overlay and len(labelled) > 1:
@@ -210,7 +254,11 @@ def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:
         except selector.SelectionError as exc:
             raise RunError(str(exc)) from exc
 
-        acceptable = _acceptability(prepared, project, warnings)
+        # In a settings comparison every column is the same file, so asking all
+        # of them whether a frame is usable would run the same ffprobe once per
+        # variant for the same answer.
+        judges = prepared[:1] if project.mode is Mode.SETTINGS else prepared
+        acceptable = _acceptability(judges, project, warnings)
         if acceptable is not None and project.frames.method is not FrameMethod.MANUAL:
             frames, rejected = selector.refine(frames, total, acceptable)
             if rejected:
@@ -226,7 +274,10 @@ def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:
 
         project.output.mkdir(parents=True, exist_ok=True)
         results: list[SourceResult] = []
-        for item, source in zip(prepared, project.sources):
+        # `plan`, not project.sources: a settings comparison has one file and
+        # several columns, so zipping against the sources would produce exactly
+        # one column and quietly drop the rest.
+        for item, (source, render) in zip(prepared, plan, strict=True):
             directory = project.output / safe_directory_name(item.name)
             if progress:
                 progress(f"capturing {len(frames)} frames from {item.name}")
@@ -240,9 +291,16 @@ def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:
                     directory=directory,
                     files=files,
                     source_path=source.path,
+                    options=dict(render.options) if render else {},
                     notes=list(getattr(item, "assumptions", [])),
                 )
             )
+
+        # Collected after capture, not before: some notes are only known once
+        # something has been rendered -- mpv cannot say what size its window
+        # settled at until it has drawn a frame.
+        for result in results:
+            warnings.extend(f"{result.name}: {note}" for note in result.notes)
     finally:
         for item in prepared:
             item.close()
@@ -282,6 +340,10 @@ def _write_manifest(
                 "directory": result.directory.name,
                 "path": str(result.source_path),
                 "files": [f.name for f in result.files],
+                # What produced this column. In a settings comparison it is the
+                # answer to "which of these did I actually like", which is the
+                # whole reason for running one.
+                "options": result.options,
                 "notes": result.notes,
             }
             for result in results
@@ -329,9 +391,57 @@ directory = "out"
 """
 
 
-def scaffold(path: Path, title: str = "Untitled comparison") -> Path:
+SETTINGS_TEMPLATE = """\
+# kiyas settings comparison
+#
+# One file, rendered several different ways, so you can decide what your
+# player's configuration should be. Run it with:  kiyas run {name}
+#
+# 'kiyas templates' lists the built-in sets of variants.
+
+title = "{title}"
+mode = "settings"
+
+[[source]]
+path = "CHANGE ME.mkv"
+name = "source"
+# crop = [0, 0, 140, 140]   # left, right, top, bottom
+
+[frames]
+# For this kind of comparison, choosing the frames yourself is usually better
+# than spreading them evenly: the shot that settles the argument is a specific
+# one. 'kiyas pick CHANGE ME.mkv' plays the file and prints the block to paste.
+method = "count"
+count = 6
+skip_start = "5%"
+skip_end = "10%"
+skip_dark = true
+
+[settings]
+template = "tonemap"   # tonemap | gamut | scalers | dscale | deband | shaders
+# width = 1920         # capture width; the height follows the source's aspect
+                       # ratio. Default: the source's own width. mpv renders
+                       # into a window and a window cannot be bigger than your
+                       # screen, so a 4K source is captured smaller unless you
+                       # set fullscreen.
+# fullscreen = true    # capture at the full screen resolution instead
+# base = {{ target-peak = 203 }}   # applied to every variant
+
+# Instead of (or as well as) a template, spell the variants out. The name is
+# the column label in the published comparison.
+# [[variant]]
+# name = "ArtCNN C4F32"
+# options = {{ glsl-shaders = "C:/path/to/ArtCNN_C4F32.glsl" }}
+
+[output]
+directory = "out"
+"""
+
+
+def scaffold(path: Path, title: str = "Untitled comparison", *, settings: bool = False) -> Path:
     """Write a starter project file. Refuses to overwrite."""
     if path.exists():
         raise RunError(f"{path} already exists; not overwriting it")
-    path.write_text(TEMPLATE.format(name=path.name, title=title), encoding="utf-8")
+    text = SETTINGS_TEMPLATE if settings else TEMPLATE
+    path.write_text(text.format(name=path.name, title=title), encoding="utf-8")
     return path

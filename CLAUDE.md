@@ -55,8 +55,13 @@ config.py           the project TOML: model, validation, error messages
 media/binaries.py   locating and probing external executables
 media/probe.py      what a file is, via ffprobe
 frames/selector.py  which frames to capture (arithmetic only, no decoding)
-engines/base.py     the protocol both engines implement
-engines/*.py        VapourSynth (default) and ffmpeg (fallback)
+engines/base.py     the protocol every engine implements
+engines/*.py        VapourSynth (default), ffmpeg (fallback), mpv (settings)
+mpvctl/ipc.py       JSON IPC: named pipe on Windows, socket elsewhere
+mpvctl/profile.py   the mpv configuration kiyas owns
+mpvctl/session.py   one mpv process, driven frame by frame
+mpvctl/variants.py  render variants and the built-in templates
+mpvctl/picker.py    choosing frames by watching the film
 run.py              orchestration: config in, PNGs and a manifest out
 doctor.py           what this machine can do, and what is missing
 setup_env.py        installing the VapourSynth stack into this venv
@@ -71,7 +76,14 @@ without media and neither engine reimplements the search.
 
 **`run.py` names no engine.** It picks one, asks it to prepare each source, and
 writes what comes back. Anything engine-specific that leaks up to here is in
-the wrong place.
+the wrong place. The one exception is `choose_engine`, whose entire job is
+naming engines: a settings comparison resolves to mpv there, because no other
+engine can produce one.
+
+**The two modes meet in `run.columns()`.** A source comparison is N files and
+no render settings; a settings comparison is one file and N variants. Below
+that function nothing knows which it is looking at, which is why the frame
+selection, capture, manifest and publishing paths are not written twice.
 
 ## The order transformations are applied in
 
@@ -149,6 +161,9 @@ against real material; feature-length remuxes are at
   that tonemapping changed the image passed for a while without the tonemapper
   doing anything, because the two captures had different labels in the corner.
   If a pixel comparison passes suspiciously easily, check the overlay first.
+  The converse also bites: turning the overlay off is such a reflex that the
+  mpv guard ran only without a caption, and the caption had a bug of its own.
+  Where the label can affect the result, test both.
 
 - **L-SMASH writes indexing progress straight to file descriptor 2.** Not
   through VapourSynth's logger, so `add_log_handler` does not see it and
@@ -195,6 +210,59 @@ against real material; feature-length remuxes are at
   and the *same project file* selects slightly different frames depending on
   the engine. Within one run only one engine is used, so a comparison is never
   internally inconsistent -- but a run is only reproducible against itself.
+
+## Driving mpv
+
+mpv is a player being used as a renderer, and almost everything below is a
+consequence of that.
+
+- **Windows serialises I/O on a synchronous handle, so the IPC client is
+  single-threaded.** The natural design -- a reader thread plus commands from
+  the caller's thread -- deadlocks after a couple of messages, because a
+  pending read blocks a write on the same handle. It is not intermittent and it
+  looks exactly like mpv hanging. `ipc.py` asks `PeekNamedPipe` how many bytes
+  are waiting and never has two operations outstanding.
+
+- **The seek timestamp for frame N is `N / fps`, not the middle of the frame.**
+  mpv's exact seek lands on the first frame whose timestamp is at or after the
+  target, so aiming at the middle of frame N's interval gives N+1. The ffmpeg
+  engine wants the opposite convention for the same accuracy, which is why the
+  two look inconsistent and are both right.
+
+- **The renderer runs behind the player, and the gap grows with resolution.**
+  This is the big one. `screenshot window` draws whatever the video output
+  currently holds, and after `playback-restart` that is still the *previous*
+  frame: 4 wrong captures in 48 at 640x360, and **8 in 8** at 3840x2160. Two
+  things make it dangerous. It is silent, and a screenshot of the wrong frame
+  in a comparison reads as a difference between the sources. Waiting on
+  `video-frame-info` looks like the fix and is not -- it is player-side and has
+  already moved. The barrier is `vo-passes`, which the video output writes
+  after drawing; `session.py` waits for its `fresh` section to change.
+
+- **Anything that makes mpv redraw satisfies the barrier.** Setting the caption
+  does exactly that, so captioning before seeking moved the marker with a
+  picture of the old frame and put every capture one frame out -- on real
+  material, while the same code passed on a test clip. Captions are applied
+  inside `MpvSession.capture`, after the seek, so no caller can get the order
+  wrong. Both failures have deterministic unit tests built on a fake mpv whose
+  renderer lags on purpose; the integration guard is parametrised over the
+  caption because running it only without one is what hid the second bug.
+
+- **A window cannot be larger than the display.** On a 2560x1440 screen a 4K
+  source captures at 2474x1392, or exactly 2560x1440 with `fullscreen = true`.
+  The size that came out is measured and reported rather than assumed.
+
+- **`--geometry=WIDTH`, never `WIDTHxHEIGHT`.** Giving both makes mpv letterbox
+  a mismatched aspect ratio and the bars land in the screenshot: measured 138
+  rows top and bottom on a 2.39:1 source in a 1920x1080 window.
+
+- **`--hidpi-window-scale=no` or the capture size is a lie.** At 150% display
+  scaling, `--geometry=640x360` produces a 960x540 framebuffer.
+
+- **Options in a project file are filtered.** `config-dir`, `include`,
+  `script`, `profile` and friends are refused, because a shared project file
+  that quietly pulled in somebody's whole player configuration would still
+  produce plausible-looking screenshots. See `FORBIDDEN_OPTIONS`.
 
 ## Publishing
 

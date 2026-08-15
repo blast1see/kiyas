@@ -40,6 +40,19 @@ def build_parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init", help=init_help, description=init_help)
     init.add_argument("path", nargs="?", default="kiyas.toml", type=Path, help="Where to write it.")
     init.add_argument("--title", default="Untitled comparison", help="Comparison title.")
+    init.add_argument(
+        "--settings",
+        action="store_true",
+        help="Start a settings comparison (one file, several render configurations).",
+    )
+
+    templates_help = "List the built-in settings-comparison templates."
+    sub.add_parser("templates", help=templates_help, description=templates_help)
+
+    pick_help = "Choose frames by watching the file in mpv."
+    pick = sub.add_parser("pick", help=pick_help, description=pick_help)
+    pick.add_argument("path", type=Path, help="The video file to scrub through.")
+    pick.add_argument("--start", type=int, default=0, metavar="FRAME", help="Open at this frame.")
 
     run_help = "Produce the comparison described by a project file."
     run_cmd = sub.add_parser("run", help=run_help, description=run_help)
@@ -230,14 +243,86 @@ def _cmd_init(args) -> int:
 
     console = Console()
     try:
-        path = run.scaffold(args.path.expanduser(), args.title)
+        path = run.scaffold(args.path.expanduser(), args.title, settings=args.settings)
     except run.RunError as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         return 2
 
     console.print(f"[green]wrote {escape(str(path))}[/green]")
-    console.print("Edit the [[source]] entries, then run:")
+    if args.settings:
+        console.print(escape("Point [[source]] at your file and pick a template, then run:"))
+    else:
+        console.print(escape("Edit the [[source]] entries, then run:"))
     console.print(f"  kiyas run {escape(str(path))}")
+    return 0
+
+
+def _cmd_templates() -> int:
+    from rich.console import Console
+    from rich.markup import escape
+    from rich.table import Table
+
+    from .mpvctl.variants import describe_templates
+
+    console = Console()
+    table = Table(title="Settings comparison templates", title_justify="left", expand=True)
+    table.add_column("template", no_wrap=True)
+    table.add_column("variants", overflow="fold")
+    for name, summary in describe_templates():
+        table.add_row(name, escape(summary))
+    console.print(table)
+    console.print(escape('Use one with mode = "settings" and [settings] template = "...".'))
+    return 0
+
+
+def _cmd_pick(args) -> int:
+    import tempfile
+
+    from rich.console import Console
+    from rich.markup import escape
+
+    from .media import binaries
+    from .media.probe import ProbeError, probe
+    from .mpvctl import picker
+    from .mpvctl.session import SessionError
+
+    console = Console()
+    path = args.path.expanduser()
+    if not path.is_file():
+        console.print(f"[red]no such file: {escape(str(path))}[/red]")
+        return 2
+
+    try:
+        mpv = binaries.require_binary("mpv")
+    except binaries.BinaryNotFound as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        console.print("The frame picker plays the file in mpv, so mpv has to be installed.")
+        return 2
+
+    try:
+        info = probe(path)
+    except ProbeError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        return 2
+
+    console.print(f"opening [bold]{escape(path.name)}[/bold] in mpv")
+    for key, _, what in picker.BINDINGS:
+        console.print(f"  [bold]{key}[/bold]  {what}")
+    console.print("  [bold]q[/bold]  finish and print the frames\n")
+
+    config_dir = Path(tempfile.gettempdir()) / "kiyas-mpv-profile"
+    try:
+        frames = picker.pick(mpv, path, config_dir=config_dir, fps=info.fps, start_frame=args.start)
+    except (picker.PickerError, SessionError) as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        return 1
+
+    if not frames:
+        console.print("[yellow]no frames were marked[/yellow]")
+        return 0
+
+    console.print(f"[green]{len(frames)} frame(s) marked[/green]. Paste this into your project:\n")
+    console.print(escape(picker.as_toml(frames)))
     return 0
 
 
@@ -266,6 +351,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "init":
         return _cmd_init(args)
+
+    if args.command == "templates":
+        return _cmd_templates()
+
+    if args.command == "pick":
+        return _cmd_pick(args)
 
     if args.command == "run":
         return _cmd_run(args)

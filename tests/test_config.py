@@ -111,6 +111,7 @@ def test_source_comparison_needs_two_sources(tmp_path):
 
 
 def test_settings_mode_allows_a_single_source(tmp_path):
+    """One file is the *point* of a settings comparison, not a shortfall."""
     path = write(
         tmp_path,
         """
@@ -119,10 +120,16 @@ def test_settings_mode_allows_a_single_source(tmp_path):
         [[source]]
         path = "a.mkv"
         name = "A"
+
+        [settings]
+        template = "tonemap"
         """,
     )
 
-    assert config.load(path).mode is Mode.SETTINGS
+    project = config.load(path)
+    assert project.mode is Mode.SETTINGS
+    assert len(project.sources) == 1
+    assert len(project.settings.variants) > 1
 
 
 def test_no_sources_at_all_is_rejected(tmp_path):

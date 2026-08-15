@@ -92,7 +92,7 @@ def test_auto_picks_the_best_available(tmp_path):
 
 
 def test_explicit_unavailable_engine_is_refused(tmp_path, monkeypatch):
-    monkeypatch.setattr(engines, "available_engines", lambda: ["ffmpeg"])
+    monkeypatch.setattr(engines, "available_engines", lambda tools=None: ["ffmpeg"])
     project = _project(tmp_path, engine=Engine.VAPOURSYNTH)
 
     with pytest.raises(RunError, match="not available here"):
@@ -100,7 +100,7 @@ def test_explicit_unavailable_engine_is_refused(tmp_path, monkeypatch):
 
 
 def test_no_engine_at_all_points_at_doctor(tmp_path, monkeypatch):
-    monkeypatch.setattr(engines, "available_engines", lambda: [])
+    monkeypatch.setattr(engines, "available_engines", lambda tools=None: [])
     project = _project(tmp_path)
 
     with pytest.raises(RunError, match="kiyas doctor"):

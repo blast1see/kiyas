@@ -7,8 +7,9 @@ screenshots from several sources, analyse audio, and publish the result to
 *kıyas* is Turkish for "comparison".
 
 > **Status: usable.** Point it at two or more files and it writes frame-matched,
-> tonemapped screenshots and publishes them to slow.pics. mpv integration,
-> audio analysis and the GUI are still to come. See [Roadmap](#roadmap).
+> tonemapped screenshots and publishes them to slow.pics. Point it at one file
+> and a list of player settings and it renders that frame every way you asked
+> for. Audio analysis and the GUI are still to come. See [Roadmap](#roadmap).
 
 ---
 
@@ -49,7 +50,8 @@ in the source.
 **Your mpv config is never touched.** mpv is always invoked with
 `--config-dir` pointing at a directory kiyas owns. When that flag is set mpv
 reads only that directory; `%APPDATA%/mpv` is not read, not merged and not
-written.
+written. Project files cannot set the options that would undo this. Shader
+files you name are read where they live, and never copied or modified.
 
 **The GUI has no privileges.** It writes a project TOML and calls the same core
 the CLI calls. Anything the GUI can do is reachable from the command line, the
@@ -66,8 +68,10 @@ dropped next to a release must never be executed.
 - Python 3.12+ (3.13 recommended)
 - [FFmpeg](https://ffmpeg.org/) on PATH — a full build, for `libplacebo`,
   `zscale`, `showspectrumpic` and `showwavespic`
-- [mpv](https://mpv.io/) on PATH — only for settings comparisons and the frame
-  picker
+- [mpv](https://mpv.io/) 0.36+ on PATH, built with libplacebo — for settings
+  comparisons and the frame picker. Not needed to compare files against each
+  other. If it lives somewhere unusual, name it under `[tools]` in the project
+  file instead of putting it on PATH
 - Optional: [MediaInfo](https://mediaarea.net/en/MediaInfo) for detailed audio
   metadata, [dovi_tool](https://github.com/quietvoid/dovi_tool) for Dolby
   Vision enhancement layers
@@ -113,6 +117,8 @@ kiyas setup               # install the VapourSynth stack into the current envir
 kiyas init project.toml   # write a starter project file
 kiyas run project.toml    # produce the comparison
 kiyas publish out/        # upload it to slow.pics
+kiyas pick film.mkv       # choose frames by watching, in mpv
+kiyas templates           # list the built-in settings comparisons
 ```
 
 A project is a TOML file. Six sources with individual crops, trims and
@@ -158,6 +164,67 @@ selected position forward until the frame is a B-frame *in every source*.
 **Skip dark**: a frame that is essentially black compares nothing. Brightness is
 measured over the centre of the picture so letterbox bars do not skew it.
 
+## Settings comparisons
+
+The other axis: *one* file, one frame, rendered several different ways. This is
+how you decide what your player config should be, and mpv is the only engine
+that can do it — tone-mapping curves and GLSL shaders live inside a renderer.
+
+```powershell
+kiyas init tonemap.toml --settings
+kiyas templates            # what the built-in sets contain
+kiyas run tonemap.toml
+```
+
+```toml
+title = "1917 — tone mapping"
+mode = "settings"
+
+[[source]]
+path = "1917.2160p.UHD.BluRay.REMUX.DV.HDR.mkv"
+name = "1917 UHD"
+
+[frames]
+method = "manual"
+manual = [36869, 67793]   # from `kiyas pick`
+
+[settings]
+template = "tonemap"      # tonemap | gamut | scalers | dscale | deband | shaders
+# width = 1920            # capture width; the height follows the source aspect
+# fullscreen = true       # capture at the full screen resolution
+# base = { target-peak = 203 }   # applied to every variant
+
+# Or spell the variants out. The name becomes the column label.
+[[variant]]
+name = "ArtCNN C4F32"
+options = { glsl-shaders = "~/mpv/shaders/ArtCNN_C4F32.glsl" }
+```
+
+Shader files are read where they are. kiyas never copies, edits or imports
+anything from your player configuration.
+
+**About the capture size.** mpv renders into a window and a window cannot be
+bigger than your display, so a 4K source is captured smaller unless you set
+`fullscreen`. On a 2560x1440 screen that is 2474x1392 windowed, or exactly
+2560x1440 fullscreen. Whatever size it came out is reported after the run,
+because a comparison produced at a different resolution than the last one is
+not comparable with it.
+
+## Choosing frames by hand
+
+Automatic selection spreads captures evenly and avoids black frames, which is
+the right default and no help at all when the shot that settles the argument is
+a specific one.
+
+```
+kiyas pick film.mkv
+```
+
+That opens the file in mpv with normal playback controls. Press `s` to mark the
+frame you are on, `u` to undo, `q` to finish. It prints a `[frames]` block ready
+to paste into a project file — it does not edit your project, because guessing
+whether to add or replace would eventually destroy work.
+
 ## Publishing
 
 ```
@@ -182,7 +249,7 @@ publish that died halfway only sends what is missing.
 | 0 | Environment setup, diagnostics, binary resolution | **done** |
 | 1 | Source model, project TOML, frame selection, VapourSynth + ffmpeg engines, tonemapping | **done** |
 | 2 | slow.pics upload, forum markup | **done** |
-| 3 | mpv layer: portable config dir, frame picker, settings comparison, side-by-side playback | planned |
+| 3 | mpv layer: portable config dir, frame picker, settings comparison | **done** |
 | 4 | Audio: spectrograms, waveforms, frequency response, bit depth, offset, metadata table | planned |
 | 5 | PySide6 desktop interface | planned |
 | 6 | Packaging and release | planned |

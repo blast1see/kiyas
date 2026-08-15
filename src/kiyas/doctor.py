@@ -12,6 +12,7 @@ things that can fail, so it is done defensively and reported, never propagated.
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -24,7 +25,10 @@ _INSTALL_VS = "Run 'kiyas setup' to install the VapourSynth stack into this envi
 _INSTALL_FFMPEG = (
     "Install FFmpeg and put its bin directory on PATH, or set it under [tools] in the config."
 )
-_INSTALL_MPV = "mpv is only needed for settings comparisons and the frame picker."
+_INSTALL_MPV = (
+    "Needed for settings comparisons (tone-mapping curves, shaders, scalers) and the frame "
+    "picker. Install mpv and put it on PATH, or set it under [tools] in the project file."
+)
 _INSTALL_AUDIO = "Run 'pip install kiyas[audio]' for audio analysis."
 _INSTALL_GUI = "Run 'pip install kiyas[gui]' for the desktop interface."
 _INSTALL_SYNC = (
@@ -76,10 +80,13 @@ class Report:
     def default_engine(self) -> str | None:
         """The engine kiyas would pick for a source comparison.
 
-        Order is quality-first, not availability-first: VapourSynth is frame
-        exact and has the best tonemapping, ffmpeg is the always-available
-        fallback, and mpv is last because it seeks to keyframes, which can
-        desync two sources against each other.
+        Order is quality-first, not availability-first. VapourSynth addresses
+        frames by index and has the best tonemapping. ffmpeg is the
+        always-available fallback. mpv is last because it is a player: its
+        exact seek does land on the right frame, but the picture then has to
+        survive a render, a window size and a display -- three things a
+        comparison of two files does not want in the way. It is not last for a
+        settings comparison, where it is the only engine that can do the job.
         """
         for preferred in ("vapoursynth", "ffmpeg", "mpv"):
             if preferred in self.usable_engines:
@@ -249,11 +256,77 @@ def check_ffmpeg() -> tuple[Check, Check]:
     return engine, tool
 
 
+#: `keybind` over IPC, which the frame picker needs, arrived in mpv 0.36.
+_MPV_MINIMUM = (0, 36)
+
+_MPV_VERSION = re.compile(r"\bv?(\d+)\.(\d+)\.(\d+)")
+
+
+def _mpv_version_tuple(version: str | None) -> tuple[int, int] | None:
+    match = _MPV_VERSION.search(version or "")
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _mpv_banner(path: Path) -> str:
+    """mpv's full ``--version`` output, which names the libraries it links."""
+    try:
+        proc = subprocess.run(  # noqa: S603
+            [str(path), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout or proc.stderr or ""
+
+
 def check_mpv() -> Check:
     mpv = binaries.describe("mpv")
     if mpv is None:
         return Check("mpv", Status.MISSING, "not on PATH", _INSTALL_MPV)
-    return Check("mpv", Status.OK, _short_version(mpv.version) or str(mpv.path))
+
+    version = _short_version(mpv.version) or str(mpv.path)
+    numbers = _mpv_version_tuple(mpv.version)
+    if numbers is not None and numbers < _MPV_MINIMUM:
+        return Check(
+            "mpv",
+            Status.PARTIAL,
+            f"{version}; the frame picker needs {_MPV_MINIMUM[0]}.{_MPV_MINIMUM[1]} or newer",
+            "Settings comparisons will still run. 'keybind' over IPC, which the picker uses "
+            "to bind its keys, was added in mpv 0.36.",
+        )
+
+    banner = _mpv_banner(mpv.path)
+    if banner and "libplacebo" not in banner:
+        # Every tone-mapping curve and gamut-mapping mode a settings
+        # comparison varies is libplacebo's. Without it mpv still plays video
+        # and the variants all come out identical, which reads as a result.
+        return Check(
+            "mpv",
+            Status.PARTIAL,
+            f"{version}; built without libplacebo",
+            "Tone-mapping and gamut templates need libplacebo. Shader and scaler "
+            "comparisons still work.",
+        )
+
+    # The mpv engine measures frames with ffprobe rather than by seeking once
+    # per candidate, so it is not usable on its own.
+    if binaries.find_binary("ffprobe") is None:
+        return Check(
+            "mpv",
+            Status.PARTIAL,
+            f"{version}; ffprobe missing",
+            "The mpv engine reads frame counts, picture types and brightness with ffprobe. "
+            + _INSTALL_FFMPEG,
+        )
+    return Check("mpv", Status.OK, version)
 
 
 def _short_version(version: str | None) -> str | None:

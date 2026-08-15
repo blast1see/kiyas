@@ -13,7 +13,8 @@ the result and it is defined once, in :data:`kiyas.config.PROCESSING_ORDER`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -45,6 +46,28 @@ ACTIVE_AREA = 0.6
 
 class EngineError(RuntimeError):
     """Raised when an engine cannot do what was asked of it."""
+
+
+@dataclass(frozen=True, slots=True)
+class RenderSettings:
+    """One column of a settings comparison: a name and how to render it.
+
+    ``options`` are renderer-specific -- today that means mpv options, because
+    mpv is the only engine that can render the same frame two different ways.
+    An engine handed options it cannot honour must refuse rather than ignore
+    them: a settings comparison whose variants were all rendered identically
+    looks like a finding ("no difference at all") instead of a failure.
+
+    ``width`` and ``fullscreen`` describe the capture size and belong here
+    rather than on the source, because they are a property of the comparison:
+    every column has to be the same size or the pictures cannot be flipped
+    between.
+    """
+
+    name: str = ""
+    options: Mapping[str, str] = field(default_factory=dict)
+    width: int | None = None
+    fullscreen: bool = False
 
 
 @runtime_checkable
@@ -93,8 +116,12 @@ class PreparedSource(Protocol):
 class FrameEngine(Protocol):
     name: str
 
-    def available(self) -> bool:
-        """Whether this engine can run in the current environment."""
+    def available(self, tools: Mapping[str, str] | None = None) -> bool:
+        """Whether this engine can run in the current environment.
+
+        ``tools`` is the project's ``[tools]`` table, so an executable the user
+        pointed at explicitly counts as present even when it is not on PATH.
+        """
         ...
 
     def prepare(
@@ -106,6 +133,7 @@ class FrameEngine(Protocol):
         tools: dict[str, str] | None = None,
         progress: Callable[[str], None] | None = None,
         index_dir: Path | None = None,
+        render: RenderSettings | None = None,
     ) -> PreparedSource:
         """Open ``source`` and apply its transformations in the fixed order.
 
@@ -117,5 +145,9 @@ class FrameEngine(Protocol):
         written next to the media, which is what makes a second run fast; point
         this elsewhere for a read-only or shared library. Engines that do not
         build an index ignore it.
+
+        ``render`` is set only for a settings comparison. An engine that cannot
+        vary its rendering must raise :class:`EngineError` rather than ignore
+        it.
         """
         ...

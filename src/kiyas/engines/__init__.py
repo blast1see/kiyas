@@ -6,9 +6,18 @@ orchestrator never learns which one is running.
 
 from __future__ import annotations
 
-from .base import EngineError, FrameEngine, PreparedSource
+from collections.abc import Mapping
 
-__all__ = ["EngineError", "FrameEngine", "PreparedSource", "get_engine", "available_engines"]
+from .base import EngineError, FrameEngine, PreparedSource, RenderSettings
+
+__all__ = [
+    "EngineError",
+    "FrameEngine",
+    "PreparedSource",
+    "RenderSettings",
+    "available_engines",
+    "get_engine",
+]
 
 
 def get_engine(name: str):
@@ -25,15 +34,30 @@ def get_engine(name: str):
         from .ffmpeg import FfmpegEngine
 
         return FfmpegEngine()
+    if name == "mpv":
+        from .mpv import MpvEngine
+
+        return MpvEngine()
     raise EngineError(f"unknown engine {name!r}")
 
 
-def available_engines() -> list[str]:
-    """Engine names that can run here, best first."""
+def available_engines(tools: Mapping[str, str] | None = None) -> list[str]:
+    """Engine names that can run here, best first.
+
+    ``tools`` is the project's ``[tools]`` table. Passing it matters: on a
+    machine where mpv is installed somewhere unusual and named in the project
+    file, checking PATH alone reports it missing and the run fails with advice
+    to install something that is already installed.
+
+    mpv is last for a source comparison: it addresses frames by timestamp
+    through a player's seek, which is one more layer of interpretation than
+    the other two need. It is not last for a settings comparison -- there it
+    is the only engine that can do the job at all.
+    """
     usable = []
-    for name in ("vapoursynth", "ffmpeg"):
+    for name in ("vapoursynth", "ffmpeg", "mpv"):
         try:
-            if get_engine(name).available():
+            if get_engine(name).available(tools):
                 usable.append(name)
         except Exception:  # noqa: BLE001 - an unusable engine is not an error
             continue
