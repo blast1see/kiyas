@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import textwrap
-from pathlib import Path
 
 import pytest
 
@@ -388,12 +387,24 @@ def test_every_per_source_setting_survives(tmp_path):
         assert after == before, f"{before.name} changed"
 
 
-def test_windows_paths_survive_without_being_mangled(tmp_path):
-    """A basic TOML string would need every backslash doubled."""
-    _, second = _round_trip(tmp_path, FULL)
+def test_windows_paths_are_written_without_being_mangled(tmp_path):
+    """A basic TOML string would need every backslash doubled.
 
-    assert second.sources[0].path == Path(r"C:\media\a.mkv")
-    assert second.tools["mpv"] == r"C:\Program Files\mpv\mpv.exe"
+    Asserted on what is written rather than on what comes back from `load`,
+    because ``C:\\media\\a.mkv`` is not an absolute path on Linux -- `load`
+    resolves it against the project file there, correctly, and the test would
+    be measuring that instead. Found by CI, on a machine where the difference
+    is not invisible.
+    """
+    import tomllib
+
+    project = config.load(write(tmp_path, FULL))
+
+    text = config.dumps(project)
+
+    assert r"'C:\Program Files\mpv\mpv.exe'" in text, "written literally, not escaped"
+    assert "\\\\" not in text, "no doubled backslashes"
+    assert tomllib.loads(text)["tools"]["mpv"] == r"C:\Program Files\mpv\mpv.exe"
 
 
 def test_a_settings_project_survives(tmp_path):
