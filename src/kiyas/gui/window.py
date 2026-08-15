@@ -61,10 +61,6 @@ class GuiError(ValueError):
     """Raised when what is on screen cannot be turned into a project."""
 
 
-def blank_project() -> Project:
-    return Project(mode=Mode.SOURCE, title="", sources=[], frames=FrameSelection())
-
-
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -75,7 +71,6 @@ class MainWindow(QMainWindow):
         self._runner = Runner(self)
         self._variants: list[Variant] = []
         self._output_directory: Path | None = None
-        self._published_url: str = ""
 
         self._build_menu()
         self._build_body()
@@ -659,7 +654,6 @@ class MainWindow(QMainWindow):
             return
 
         self.log.clear()
-        self._published_url = ""
         self.link_edit.clear()
         self._busy(True)
         self._runner.start(
@@ -749,9 +743,9 @@ class MainWindow(QMainWindow):
 
     def _published(self, result) -> None:
         self._busy(False)
-        self._published_url = getattr(result, "url", "")
-        self.link_edit.setText(self._published_url)
-        self._note(f"published: {self._published_url}")
+        url = getattr(result, "url", "")
+        self.link_edit.setText(url)
+        self._note(f"published: {url}")
 
     def _failed(self, message: str) -> None:
         self._busy(False)

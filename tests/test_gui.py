@@ -541,3 +541,122 @@ def test_an_unset_tonemap_reads_as_auto(window, tmp_path):
     window.sources.removeCellWidget(0, 4)
 
     assert window.build_project().sources[0].tonemap is T.AUTO
+
+
+# --------------------------------------------------------------------------
+# Starting up
+# --------------------------------------------------------------------------
+
+
+def test_a_project_on_the_command_line_is_opened_not_added_as_media(window, tmp_path):
+    from kiyas.gui.app import apply_arguments
+
+    project = tmp_path / "p.toml"
+    project.write_text(
+        """
+title = "From the command line"
+
+[[source]]
+path = "a.mkv"
+name = "A"
+
+[[source]]
+path = "b.mkv"
+name = "B"
+""",
+        encoding="utf-8",
+    )
+
+    apply_arguments(window, [str(project)])
+
+    assert window.title_edit.text() == "From the command line"
+    assert window.sources.rowCount() == 2
+
+
+def test_media_on_the_command_line_is_added(window, tmp_path):
+    from kiyas.gui.app import apply_arguments
+
+    apply_arguments(window, [str(path) for path in _media(tmp_path, "a.mkv", "b.mkv")])
+
+    assert [row[0] for row in window._rows()] == ["a", "b"]  # noqa: SLF001
+
+
+def test_arguments_that_are_not_files_are_dropped(tmp_path):
+    """Usually a shell that did not expand a pattern."""
+    from kiyas.gui.app import split_arguments
+
+    real = tmp_path / "a.mkv"
+    real.write_bytes(b"x")
+
+    projects, media = split_arguments([str(real), str(tmp_path / "*.mkv"), "nonsense"])
+
+    assert projects == []
+    assert media == [real]
+
+
+def test_a_project_that_cannot_be_read_leaves_a_usable_window(window, tmp_path):
+    """The point of opening a project this way is to get a window."""
+    from kiyas.gui.app import apply_arguments
+
+    broken = tmp_path / "broken.toml"
+    broken.write_text("this is not toml [[[", encoding="utf-8")
+
+    apply_arguments(window, [str(broken)])
+
+    assert "could not open" in window.log.toPlainText()
+    assert window.isEnabled()
+
+
+# --------------------------------------------------------------------------
+# End to end
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_pressing_run_produces_a_comparison(application, tmp_path):
+    """The whole path: window -> project -> worker -> core -> files on disk.
+
+    Everything above is about whether the window describes the right work.
+    This is the one that says the work happens.
+    """
+    import subprocess
+    import time
+
+    from kiyas.media import binaries
+
+    if binaries.find_binary("ffmpeg") is None:
+        pytest.skip("ffmpeg is not installed")
+
+    clip = tmp_path / "clip.mkv"
+    subprocess.run(  # noqa: S603
+        [
+            str(binaries.require_binary("ffmpeg")), "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=24:duration=4",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(clip),
+        ],  # fmt: skip
+        check=True, capture_output=True, timeout=300,
+    )  # fmt: skip
+
+    window = MainWindow()
+    try:
+        window.add_paths([clip, clip])
+        window.sources.item(1, 0).setText("second")
+        window.count_spin.setValue(2)
+        window.b_frames_check.setChecked(False)
+        window.skip_dark_check.setChecked(False)
+        window.engine_combo.setCurrentText("ffmpeg")
+        window.output_edit.setText(str(tmp_path / "out"))
+
+        window.run()
+        deadline = time.monotonic() + 300
+        while window._runner.busy and time.monotonic() < deadline:  # noqa: SLF001
+            application.processEvents()
+            time.sleep(0.02)
+        application.processEvents()
+
+        assert "done: 4 images" in window.log.toPlainText()
+        assert window.publish_button.isEnabled()
+        assert sorted(p.name for p in (tmp_path / "out" / "clip").glob("*.png"))
+        assert (tmp_path / "out" / "kiyas-manifest.json").is_file()
+    finally:
+        window.close()
