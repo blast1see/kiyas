@@ -64,6 +64,11 @@ SILENT_DBFS = -90.0
 #: an exact test would report nothing on the files where this matters most.
 DUPLICATE_ENERGY = 1e-6
 
+#: Deepest quantisation worth looking for. No audio master is meaningfully
+#: beyond 24 bits -- the extra range of a 32-bit container is headroom for
+#: processing, not detail that was recorded.
+MAX_USEFUL_DEPTH = 24
+
 #: Decoding is bounded by disk and CPU, not by anything that should hang.
 _DECODE_TIMEOUT = 3600.0
 
@@ -215,6 +220,10 @@ def analyse(
     psd_blocks = 0
     frequencies = np.fft.rfftfreq(FFT_SIZE, 1 / track.sample_rate)
     smallest_bit = 32
+    # Trailing zeros at which the track is using everything it declares. No
+    # audio source is meaningfully deeper than 24 bits, so that is the floor
+    # when the container says nothing.
+    enough_bits = 32 - min(track.bit_depth or MAX_USEFUL_DEPTH, MAX_USEFUL_DEPTH)
     total_frames = 0
     # Energy of the difference between every pair of channels. Two channels
     # that are copies of each other is what a "5.1" upmix of a stereo master
@@ -268,7 +277,14 @@ def analyse(
                 shaped = block[:whole].reshape(-1, window, channels)
                 envelope.append(np.stack([shaped.min(axis=1), shaped.max(axis=1)], axis=-1))
 
-            if track.is_lossless:
+            # Stops once the track is using every bit it claims to. The
+            # measurement is the *deepest* quantisation seen anywhere, so once
+            # that reaches the declared depth no further chunk can change the
+            # answer -- and this is the most expensive step in the loop, a
+            # float64 conversion and a rounding pass over every sample. A file
+            # that is *not* telling the truth still gets read to the end, which
+            # is the case the number exists for.
+            if track.is_lossless and smallest_bit > enough_bits:
                 smallest_bit = min(smallest_bit, _trailing_zeros(block))
 
             # Frequency response, accumulated rather than sampled.
