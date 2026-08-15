@@ -334,9 +334,16 @@ consequence of that.
   renderer lags on purpose; the integration guard is parametrised over the
   caption because running it only without one is what hid the second bug.
 
-- **A window cannot be larger than the display.** On a 2560x1440 screen a 4K
-  source captures at 2474x1392, or exactly 2560x1440 with `fullscreen = true`.
-  The size that came out is measured and reported rather than assumed.
+- **A window cannot be larger than the display, and `screenshot subtitles` is
+  not the way out.** It does capture at source resolution -- and without the
+  display transform, which is most of what a settings comparison compares. All
+  four tone curves come back byte-identical there, and ArtCNN does not fire at
+  all: the shader's own `//!WHEN` condition says an upscaler has nothing to do
+  when the output is the source's size. Both measured. A source comparison is
+  the case that owes you the source's resolution, and it delivers it; a
+  settings comparison is a picture of a renderer driving a display, so it is
+  the display's size. The size that came out is measured and reported rather
+  than assumed.
 
 - **`--geometry=WIDTH`, never `WIDTHxHEIGHT`.** Giving both makes mpv letterbox
   a mismatched aspect ratio and the bars land in the screenshot: measured 138

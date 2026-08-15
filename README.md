@@ -216,12 +216,25 @@ options = { glsl-shaders = "~/mpv/shaders/ArtCNN_C4F32.glsl" }
 Shader files are read where they are. kiyas never copies, edits or imports
 anything from your player configuration.
 
-**About the capture size.** mpv renders into a window and a window cannot be
-bigger than your display, so a 4K source is captured smaller unless you set
-`fullscreen`. On a 2560x1440 screen that is 2474x1392 windowed, or exactly
-2560x1440 fullscreen. Whatever size it came out is reported after the run,
-because a comparison produced at a different resolution than the last one is
-not comparable with it.
+**About the capture size.** A settings comparison is captured at your *display*
+size, not the source's — 2474x1392 on a 2560x1440 screen, or exactly 2560x1440
+with `fullscreen`. A source comparison is not: that one is always the source's
+own resolution, and no display is involved at any point.
+
+The difference is not an oversight in one of them. What a settings comparison
+compares only exists on a display:
+
+- A tone-mapping curve maps HDR *to a display*. Ask mpv for a source-resolution
+  capture and it writes the frame in its own colourspace, where no mapping has
+  happened — measured, and all four curves come back byte-identical.
+- An upscaling shader runs *because* the display is larger than the source.
+  ArtCNN carries its own condition to that effect: at source resolution it does
+  not fire, and the capture is byte-identical to having no shader at all.
+
+So "the same comparison at 4K" is not a thing being withheld; for a display
+transform it is not a question with an answer. Set `width` explicitly if you
+want the same size on every machine — the default follows the screen, and the
+size that came out is reported after every run.
 
 ## Audio
 
