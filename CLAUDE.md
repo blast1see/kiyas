@@ -171,6 +171,14 @@ passed every unit test. Frame accuracy, tonemapping and sync have to be checked
 against real material; feature-length remuxes are at
 `a directory outside this repository`.
 
+**Nine real files, deliberately unalike, are the sweep that finds this class
+of bug.** A Dolby Vision profile 7 remux, a profile 8 hybrid, a 4K WEB-DL with
+DV, four 1080p AVC remuxes, a WEB-DL with no B-frames, and an anime episode.
+The first run produced eight comparisons out of nine and several of those
+returned fewer frames than were asked for; every one of the four causes was a
+rule that was right for the material it had been written against. Synthetic
+clips cannot find these, because a synthetic clip is whatever you made it.
+
 **The settings engine has been checked against captures made by hand.** Four
 tone-mapping curves on two scenes of a 4K Dolby Vision remux, against the same
 frames captured in mpv by a person: 54.3 to 56.8 dB against the matching curve,
@@ -250,15 +258,35 @@ because a tone curve is monotonic: it moves every value and reorders none.
   picks different frames depending on which engine ran.
 
 - **Absolute thresholds cannot serve both a test clip and a feature film.**
-  This has now been got wrong twice, so treat it as a rule: **any threshold
-  measured in seconds or frames must be a fraction of the material, with a
-  floor.** A four-second test clip and a three-hour remux differ by four orders
-  of magnitude, and a constant tuned for one is nonsense for the other.
+  This has now been got wrong three times, so treat it as a rule: **any
+  threshold measured in seconds or frames must be a fraction of the material,
+  with a floor.** A four-second test clip and a three-hour remux differ by four
+  orders of magnitude, and a constant tuned for one is nonsense for the other.
   - The source-length warning is 1% of the longest source, floor one second.
     A fixed sixty seconds never fired on short clips and fired on every
     alternate cut of a film.
   - The ffmpeg tail margin is 0.2% of the frame count, floor two frames. A
     fixed ten seconds zeroed out every four-second clip in the test suite.
+  - The nudge budget is 25% of the gap to the next requested frame, floor 48.
+    A fixed 48 is two seconds: enough to find a B-frame, useless for escaping
+    a night scene, and a dark film returned one frame of the three asked for.
+    Watch the second-order effect too -- a bigger budget meant thousands of
+    ffmpeg launches per position, so past the first two seconds the search
+    samples every 24 frames. Brightness is a property of a shot; the picture
+    type is not.
+
+- **A rule that rejects everything is a bug with a message attached.** An
+  encode with no B-frames at all is ordinary -- a WEB-DL made for low latency
+  can be entirely I and P -- and "must be a B-frame" then threw away every
+  frame in the file and told the user to guess between two knobs. What the rule
+  is *for* is avoiding I-frames, so that is the fallback. Before adding a rule,
+  ask what it does to material that cannot satisfy it.
+
+- **DTS is not one codec and ffprobe will not tell you which one you have.**
+  Every variant reports `codec_name=dts`; `DTS-HD MA` is lossless and lives in
+  the *profile*. Going by the name treats the most common lossless track on a
+  Blu-ray as lossy and refuses to measure its bit depth, which is the file
+  people want that number for.
 
 - **ffprobe's frame count overshoots, and the two engines disagree because of
   it.** VapourSynth reports `clip.num_frames`, which is exact. ffmpeg has only
