@@ -22,6 +22,22 @@ from pathlib import Path
 from .media import binaries
 
 _INSTALL_VS = "Run 'kiyas setup' to install the VapourSynth stack into this environment."
+
+#: The packaged build cannot install anything, so the hint above would send
+#: someone off to run a command that refuses. Everything else it says is true
+#: there, which is exactly why this one line has to differ.
+_INSTALL_VS_FROZEN = (
+    "The packaged build cannot install VapourSynth. It uses the ffmpeg and mpv engines; "
+    "for the VapourSynth one, use a checkout and run bootstrap.ps1."
+)
+
+
+def _install_vs_hint() -> str:
+    from .setup_env import is_frozen
+
+    return _INSTALL_VS_FROZEN if is_frozen() else _INSTALL_VS
+
+
 _INSTALL_FFMPEG = (
     "Install FFmpeg and put its bin directory on PATH, or set it under [tools] in the config."
 )
@@ -147,7 +163,7 @@ def _vapoursynth_version(vs, core) -> str:
 
 def check_vapoursynth() -> Check:
     if importlib.util.find_spec("vapoursynth") is None:
-        return Check("vapoursynth", Status.MISSING, "not installed", _INSTALL_VS)
+        return Check("vapoursynth", Status.MISSING, "not installed", _install_vs_hint())
 
     try:
         import vapoursynth as vs
@@ -163,7 +179,7 @@ def check_vapoursynth() -> Check:
             "vapoursynth",
             Status.MISSING,
             f"import failed: {type(exc).__name__}: {exc}",
-            _INSTALL_VS,
+            _install_vs_hint(),
         )
 
     version = _vapoursynth_version(vs, core)
@@ -179,14 +195,14 @@ def check_vapoursynth() -> Check:
             "vapoursynth",
             Status.MISSING,
             f"{version}; no indexer (need one of {', '.join(_VS_INDEXERS)})",
-            _INSTALL_VS,
+            _install_vs_hint(),
         )
     if missing or not has_required:
         return Check(
             "vapoursynth",
             Status.PARTIAL,
             f"{version}; missing: {', '.join(sorted(missing))}",
-            _INSTALL_VS,
+            _install_vs_hint(),
         )
     return Check("vapoursynth", Status.OK, version)
 

@@ -81,6 +81,14 @@ dropped next to a release must never be executed.
 
 ## Install
 
+**A packaged build**, from [releases](https://github.com/blast1see/kiyas/releases):
+unzip it and run `kiyas-gui.exe` for the window or `kiyas.exe` for the command
+line. No Python needed. It has the ffmpeg and mpv engines — VapourSynth is a
+stack of compiled plugins that installs into a Python environment, so that one
+needs a checkout.
+
+**A checkout**, for the VapourSynth engine and for working on it:
+
 ```powershell
 git clone https://github.com/blast1see/kiyas
 cd kiyas
@@ -305,7 +313,7 @@ publish that died halfway only sends what is missing.
 | 3 | mpv layer: portable config dir, frame picker, settings comparison | **done** |
 | 4 | Audio: spectrograms, waveforms, frequency response, bit depth, offset, metadata table | **done** |
 | 5 | PySide6 desktop interface | **done** |
-| 6 | Packaging and release | planned |
+| 6 | Packaging, CI, release | **done** |
 
 ## Credits
 

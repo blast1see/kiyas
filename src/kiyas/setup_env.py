@@ -75,6 +75,11 @@ def is_virtualenv() -> bool:
     return sys.prefix != getattr(sys, "base_prefix", sys.prefix) or hasattr(sys, "real_prefix")
 
 
+def is_frozen() -> bool:
+    """Whether this is the packaged build rather than a checkout."""
+    return bool(getattr(sys, "frozen", False))
+
+
 def ensure_isolated() -> None:
     """Refuse to install into a system interpreter unless told otherwise.
 
@@ -83,11 +88,32 @@ def ensure_isolated() -> None:
     that other projects depend on. The override exists for CI images and
     containers, where the whole filesystem is already disposable.
     """
+    if is_frozen():
+        raise SetupError(_FROZEN)
     if is_virtualenv():
         return
     if os.environ.get("KIYAS_ALLOW_GLOBAL_INSTALL") == "1":
         return
     raise SetupError(_NOT_VENV)
+
+
+#: What to say when someone runs `kiyas setup` from the packaged build.
+#:
+#: The generic "make a virtualenv" advice is not just unhelpful there, it is
+#: impossible to follow: there is no pip and no interpreter to point it at. The
+#: honest answer is that the packaged build has the engines it has.
+_FROZEN = """\
+This is the packaged build of kiyas, which cannot install anything.
+
+VapourSynth is a stack of compiled plugins that installs into a Python
+environment, and there is none here. The packaged build has the ffmpeg and mpv
+engines, which is enough for source comparisons, settings comparisons and
+audio.
+
+For the VapourSynth engine, use a checkout instead:
+    git clone https://github.com/blast1see/kiyas
+    cd kiyas
+    .\\bootstrap.ps1"""
 
 
 def vs_packages() -> list[str]:

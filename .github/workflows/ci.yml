@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Qt needs a platform plugin even to build a widget. The offscreen one is
+  # what makes the interface testable on a runner with no display.
+  QT_QPA_PLATFORM: offscreen
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is where this is developed and where mpv's window capture
+        # lives; Linux is where anything that quietly depends on a Windows
+        # path convention shows up.
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      # The integration tests build their own clips and read them back, so
+      # ffmpeg is not optional here -- without it they skip, and a suite that
+      # skips its way to green is not a suite. Installed through the runner's
+      # own package manager rather than a third-party action: this is the part
+      # nobody notices has stopped working.
+      - name: ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        # ffmpeg-full, not ffmpeg: the tonemap chain needs zscale, which the
+        # essentials build leaves out.
+        run: choco install ffmpeg-full -y --no-progress
+
+      - run: pip install -e ".[dev,audio,gui]"
+
+      - name: What this runner can do
+        run: kiyas doctor
+
+      - name: Unit and integration tests
+        # Not -m mpv: that needs a real GPU and a window server. Not
+        # -m vapoursynth: the stack is a 400 MB download for tests that the
+        # ffmpeg engine already covers the logic of.
+        run: pytest -q -m "not mpv and not vapoursynth and not live" --cov=kiyas
+
+  package:
+    # Proving the release artefact builds, on every push rather than once at
+    # tag time when it is too late to find out.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -e ".[gui,build]"
+      - run: pyinstaller --noconfirm kiyas.spec
+      - name: The binary answers for itself
+        run: dist/kiyas/kiyas.exe --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kiyas-windows
+          path: dist/kiyas
+          retention-days: 14

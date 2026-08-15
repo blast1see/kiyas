@@ -152,3 +152,32 @@ def test_the_registry_guard_can_actually_fail():
     literals = _executable_string_literals(bad)
 
     assert any("register-vfw" in text for text in literals)
+
+
+def test_the_packaged_build_says_it_cannot_install(monkeypatch):
+    """The generic virtualenv advice is impossible to follow when frozen.
+
+    There is no pip and no interpreter to point one at, so the honest answer
+    is that the packaged build has the engines it has.
+    """
+    monkeypatch.setattr(setup_env, "is_frozen", lambda: True)
+
+    with pytest.raises(setup_env.SetupError, match="packaged build"):
+        setup_env.ensure_isolated()
+
+
+def test_the_packaged_build_is_not_told_to_run_setup(monkeypatch):
+    from kiyas import doctor
+
+    monkeypatch.setattr(setup_env, "is_frozen", lambda: True)
+
+    hint = doctor._install_vs_hint()  # noqa: SLF001
+
+    assert "kiyas setup" not in hint
+    assert "bootstrap" in hint
+
+
+def test_a_checkout_is_still_told_to_run_setup():
+    from kiyas import doctor
+
+    assert "kiyas setup" in doctor._install_vs_hint()  # noqa: SLF001

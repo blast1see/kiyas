@@ -359,6 +359,21 @@ def test_resize_reaches_the_output(engine, clips, tmp_path):
         assert image.size == (320, 180)
 
 
+def _has_filter(name: str) -> bool:
+    """Whether the installed ffmpeg has a filter.
+
+    Distribution builds vary: the tonemap chain needs zscale, and plenty of
+    packaged ffmpegs are built without libzimg. `doctor` reports that as a
+    partial engine rather than a failure, and a test asserting on a filter
+    that is not there should say the same thing rather than fail.
+    """
+    proc = subprocess.run(  # noqa: S603
+        [str(binaries.require_binary("ffmpeg")), "-hide_banner", "-filters"],
+        capture_output=True, text=True, check=False, timeout=60,
+    )  # fmt: skip
+    return any(line.split()[1:2] == [name] for line in proc.stdout.splitlines() if line.split())
+
+
 def _pixels(path: Path) -> bytes:
     from PIL import Image
 
@@ -376,6 +391,9 @@ def test_hdr_source_is_tonemapped(engine, clips, tmp_path):
     earlier version of this test passed for exactly that reason while proving
     nothing.
     """
+    if engine.name == "ffmpeg" and not _has_filter("zscale"):
+        pytest.skip("this ffmpeg was built without zscale; doctor reports that too")
+
     plain = engine.prepare(
         _source(path=clips["hdr"], name="x", tonemap=Tonemap.NONE), overlay=False
     )

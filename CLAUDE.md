@@ -385,6 +385,35 @@ checked against the live service; do not change them from first principles.
 - **Never test publishing with the user's media.** `tests/` and any live check
   use ffmpeg-generated synthetic images, unlisted, with an expiry.
 
+## Packaging
+
+`kiyas.spec` builds two executables from one collection: `kiyas.exe` with a
+console and `kiyas-gui.exe` without, so double-clicking the window does not
+leave a terminal behind it. One directory, not one file -- a single-file
+PySide6 build unpacks several hundred megabytes to a temporary directory on
+every launch.
+
+- **VapourSynth is deliberately not frozen.** It is compiled plugins that
+  install into a virtualenv's site-packages; freezing it would ship something
+  that cannot then be extended with the plugin a particular comparison wants.
+
+- **A frozen build must not be told to run `kiyas setup`.** It cannot install
+  anything -- there is no pip and no interpreter to point one at -- so both
+  `setup` and `doctor`'s hint check `setup_env.is_frozen()` and say what is
+  actually possible instead. The rest of what `doctor` reports is true either
+  way, which is exactly why that one line has to differ.
+
+- **CI installs ffmpeg through the runner's own package manager**, not a
+  third-party action, because this is the part nobody notices has stopped
+  working. Windows needs `ffmpeg-full`: the essentials build has no zscale, and
+  the tonemap chain does not work without it. Tests that need a filter check
+  for it and skip, the same way `doctor` reports a partial engine rather than a
+  failure -- a suite that skips its way to green is not a suite, but a suite
+  that fails on a build variation is not one either.
+
+- **CI builds the package on every push,** not at tag time. Finding out that
+  the release artefact does not build is only useful before you need it.
+
 ## House style
 
 Comments explain *why*, not *what*, and the reason is usually a measurement or
