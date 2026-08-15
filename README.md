@@ -68,7 +68,7 @@ dropped next to a release must never be executed.
 - Windows, Linux or macOS
 - Python 3.12+ (3.13 recommended)
 - [FFmpeg](https://ffmpeg.org/) on PATH — a full build, for `libplacebo`,
-  `zscale`, `showspectrumpic` and `showwavespic`
+  `zscale` and `showspectrumpic`
 - [mpv](https://mpv.io/) 0.36+ on PATH, built with libplacebo — for settings
   comparisons and the frame picker. Not needed to compare files against each
   other. If it lives somewhere unusual, name it under `[tools]` in the project

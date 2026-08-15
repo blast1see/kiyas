@@ -22,6 +22,13 @@ and a result twice as wrong as doing nothing.
 strongly at the wrong period, and the correlation peak looks just as sharp
 there as at the right one. The peak-to-floor ratio is reported with the offset
 so a weak match can be seen for what it is.
+
+**One number is less certain than it looks.** The same real pair measured
++10571, +10524 and +10527 ms over five-, ten- and twenty-minute windows. A
+single correlation assumes the two tracks are a constant distance apart, and
+across a whole film they often are not -- which is the question AudioSyncTool's
+drift fit answers and this does not. Treat the last few milliseconds as noise,
+and install AudioSyncTool when they matter.
 """
 
 from __future__ import annotations
@@ -34,13 +41,20 @@ from ..media import binaries
 from .analysis import AnalysisError
 from .probe import AudioTrack
 
-#: Correlation is done on a mono downmix at this rate. 8 kHz keeps everything
-#: that matters for alignment -- the envelope, not the timbre -- and makes the
-#: transform of a twenty-minute window cheap.
-SYNC_RATE = 8000
+#: Correlation is done on a mono downmix at this rate.
+#:
+#: 4 kHz, which is lower than it looks. Alignment lives in the envelope, not
+#: the timbre, and the lag resolution this leaves -- 0.25 ms -- is an order of
+#: magnitude finer than the measurement's real spread. Measured on a real dub
+#: pair: 4 kHz and 8 kHz agreed to 0.1 ms, 4 kHz had the *higher* confidence
+#: (156 against 132), and it halves the transform.
+SYNC_RATE = 4000
 
-#: Longest stretch correlated, in seconds. Twenty minutes is far more than
-#: enough to lock on, and bounds the cost on a feature.
+#: Longest stretch correlated, in seconds.
+#:
+#: Twenty minutes. Measured on the same pair, confidence by window: 5 minutes
+#: 45, 10 minutes 108, 20 minutes 156, 30 minutes 81. It falls off past twenty
+#: because the extra material reaches into parts the two versions do not share.
 MAX_WINDOW = 20 * 60
 
 #: Below this peak-to-floor ratio the answer is a guess, and says so.
@@ -99,7 +113,8 @@ def _mono(track: AudioTrack, *, ffmpeg: Path, seconds: float, start: float):
         raise AnalysisError(
             f"no audio decoded from {track.path.name}: {detail[-1] if detail else 'empty output'}"
         )
-    return np.frombuffer(proc.stdout, dtype="<f4").astype(np.float64)
+    # Kept in single precision; see _gcc_phat for why that matters here.
+    return np.frombuffer(proc.stdout, dtype="<f4").copy()
 
 
 def _gcc_phat(first, second):
@@ -109,14 +124,21 @@ def _gcc_phat(first, second):
     it locks onto the music rather than the edit. Dividing by the magnitude
     keeps only the phase, which is where the timing lives, and turns the result
     into a sharp spike at the true lag instead of a broad hill.
+
+    ``scipy.fft`` rather than ``numpy.fft``, and single precision: numpy always
+    computes in double whatever it is handed, so a float32 input still
+    allocates complex128. scipy keeps the precision it is given, which halves
+    the largest arrays here for an answer that is identical to the tenth of a
+    millisecond -- the lag is an array index, not a float being accumulated.
     """
     import numpy as np
+    from scipy import fft
 
     size = 1 << int(np.ceil(np.log2(len(first) + len(second))))
-    spectrum = np.fft.rfft(first, size) * np.conj(np.fft.rfft(second, size))
+    spectrum = fft.rfft(first, size) * np.conj(fft.rfft(second, size))
     magnitude = np.abs(spectrum)
     magnitude[magnitude < 1e-12] = 1e-12
-    correlation = np.fft.irfft(spectrum / magnitude, size)
+    correlation = fft.irfft(spectrum / magnitude, size)
     correlation = np.concatenate((correlation[-(size // 2) :], correlation[: size // 2]))
 
     index = int(np.argmax(np.abs(correlation)))

@@ -14,6 +14,10 @@ from pathlib import Path
 
 from . import __version__
 
+# Safe at module level: this one is stdlib-only, unlike everything the
+# subcommands import.
+from .media.binaries import BinaryNotFound
+
 _DESCRIPTION = "Comparison workbench: screenshots, audio analysis, slow.pics publishing."
 
 
@@ -394,6 +398,27 @@ def _cmd_pick(args) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run a subcommand, turning a missing external tool into an answer.
+
+    The ``BinaryNotFound`` catch is here rather than in each subcommand so a
+    new one cannot forget it. A missing ffmpeg is the single most likely thing
+    to be wrong on a fresh machine, and a Python traceback is a poor way to say
+    "install ffmpeg" -- it reads as a crash in kiyas rather than a fact about
+    the environment.
+    """
+    try:
+        return _dispatch(argv)
+    except BinaryNotFound as exc:
+        from rich.console import Console
+        from rich.markup import escape
+
+        console = Console()
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        console.print("Run 'kiyas doctor' to see what is available and what is missing.")
+        return 2
+
+
+def _dispatch(argv: Sequence[str] | None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 

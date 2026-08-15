@@ -156,7 +156,7 @@ def _images_to_send(comparison: Comparison, response: dict) -> list[tuple[str, P
             except (IndexError, TypeError) as exc:
                 raise UploadError(
                     f"slow.pics returned an image grid that does not match the "
-                    f"comparison ({len(grid)} rows for {len(comparison.rows)} expected)"
+                    f"comparison: it sent {len(grid)} rows, this has {len(comparison.rows)}"
                 ) from exc
             if image_uuid not in already:
                 pending.append((image_uuid, path))

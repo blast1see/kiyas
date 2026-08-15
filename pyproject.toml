@@ -40,14 +40,21 @@ vs = [
     "awsmfunc",
     "vstools",
 ]
-audio = ["numpy>=1.24", "scipy>=1.10", "soundfile>=0.12", "matplotlib>=3.8"]
+# Decoding goes through ffmpeg rather than a Python reader: it is the only
+# thing that opens every codec inside every container, which is what an
+# audio track in a remux is. numpy and scipy do the measuring, matplotlib
+# the drawing.
+audio = ["numpy>=1.24", "scipy>=1.10", "matplotlib>=3.8"]
 # Offset measurement is already solved in AudioSyncTool; kiyas wraps it rather
 # than re-deriving GCC-PHAT. It is not on PyPI and a direct git reference here
 # would make this package unpublishable, so it stays an explicit manual step:
 #     pip install git+https://github.com/blast1see/AudioSyncTool
 # Without it kiyas falls back to a coarse scipy correlation and says so.
 gui = ["PySide6>=6.7"]
-dev = ["pytest>=8.3", "pytest-cov>=6", "ruff>=0.11"]
+# pillow is for the tests, which read captured PNGs back to check their
+# size and pixels. matplotlib happens to pull it in, so leaving it out
+# works until someone installs dev without audio.
+dev = ["pytest>=8.3", "pytest-cov>=6", "ruff>=0.11", "pillow>=10"]
 build = ["pyinstaller>=6.12"]
 
 [project.scripts]

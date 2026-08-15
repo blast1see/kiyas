@@ -125,3 +125,38 @@ def test_the_scaffolded_settings_project_is_valid_apart_from_the_paths(tmp_path)
 
     assert project.mode.value == "settings"
     assert len(project.settings.variants) > 1
+
+
+def test_audio_subcommand_takes_several_files():
+    parser = cli.build_parser()
+    args = parser.parse_args(["audio", "a.mkv", "b.mkv", "--track", "2"])
+
+    assert args.command == "audio"
+    assert [p.name for p in args.paths] == ["a.mkv", "b.mkv"]
+    assert args.track == 2
+
+
+def test_a_missing_external_tool_is_an_answer_not_a_traceback(monkeypatch, capsys, tmp_path):
+    """The most likely thing to be wrong on a fresh machine.
+
+    Caught in main() rather than per-subcommand so a new subcommand cannot
+    forget to. A traceback here reads as a crash in kiyas rather than a fact
+    about the environment.
+    """
+    from kiyas.media import binaries
+
+    def missing(name, configured=None):
+        raise binaries.BinaryNotFound(f"{name} was not found on PATH.")
+
+    monkeypatch.setattr(binaries, "require_binary", missing)
+    monkeypatch.setattr(binaries, "find_binary", lambda name, configured=None: None)
+    media = tmp_path / "a.mkv"
+    media.write_bytes(b"not really a video")
+
+    code = cli.main(["audio", str(media), "--output", str(tmp_path / "out")])
+
+    printed = capsys.readouterr().out
+    assert code == 2
+    assert "not found on PATH" in printed
+    assert "kiyas doctor" in printed
+    assert "Traceback" not in printed

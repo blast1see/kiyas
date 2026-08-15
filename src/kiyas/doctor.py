@@ -196,11 +196,15 @@ def check_vapoursynth() -> Check:
 # --------------------------------------------------------------------------
 
 #: ffmpeg filters kiyas relies on, and what breaks without each.
+#:
+#: Only filters that are actually called. ``showwavespic`` was listed here for
+#: a while and never used -- waveforms are drawn from the measured envelope,
+#: which is where the clipping marks come from -- so a build without it was
+#: reported as partial for a capability nothing wanted.
 _FFMPEG_FILTERS = {
     "zscale": "SDR conversion",
     "libplacebo": "HDR tonemapping",
     "showspectrumpic": "audio spectrograms",
-    "showwavespic": "audio waveforms",
 }
 
 
@@ -351,7 +355,6 @@ def _short_version(version: str | None) -> str | None:
 _OPTIONAL_PACKAGES = {
     "numpy": ("audio", _INSTALL_AUDIO),
     "scipy": ("audio", _INSTALL_AUDIO),
-    "soundfile": ("audio", _INSTALL_AUDIO),
     "matplotlib": ("audio", _INSTALL_AUDIO),
     "PySide6": ("gui", _INSTALL_GUI),
     "audio_sync": ("sync", _INSTALL_SYNC),
