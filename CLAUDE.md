@@ -171,6 +171,22 @@ passed every unit test. Frame accuracy, tonemapping and sync have to be checked
 against real material; feature-length remuxes are at
 `a directory outside this repository`.
 
+**The settings engine has been checked against captures made by hand.** Four
+tone-mapping curves on two scenes of a 4K Dolby Vision remux, against the same
+frames captured in mpv by a person: 54.3 to 56.8 dB against the matching curve,
+and 37.3 to 39.1 dB against a *different* curve of the same frame. The gap is
+the point — it says kiyas reproduced each specific curve rather than merely
+producing a tonemapped picture. The residual is dither: those captures are
+16-bit and kiyas writes 8-bit.
+
+Worth knowing if this is ever repeated: finding the frame is the hard part. A
+coarse index of keyframe thumbnails locates the *scene* and cannot locate the
+frame, because in a continuous take a second either side looks identical at
+48x27 — it was 58 seconds out, and the wrong frame read as a rendering
+difference. Decoding a two-minute window at full frame rate and rank-correlating
+every frame found it in 23 seconds. Rank correlation rather than difference,
+because a tone curve is monotonic: it moves every value and reorders none.
+
 ## Traps already paid for
 
 - **VapourSynth's version accessor keeps moving.** `core.version_string()`
