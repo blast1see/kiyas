@@ -30,7 +30,7 @@ from pathlib import Path
 from ..config import Source, Tonemap
 from ..media import binaries
 from ..media.probe import HdrFormat, VideoInfo, probe
-from .base import ACTIVE_AREA, EngineError, RenderSettings
+from .base import ACTIVE_AREA, LUMA_SAMPLE, EngineError, RenderSettings
 
 #: Decoding a single frame from a keyframe boundary; a slow disk and a long GOP
 #: can make this take a while, but not this long.
@@ -216,14 +216,26 @@ class FfmpegSource:
         if found:
             self._scanned.append((lowest, highest))
 
-    def is_b_frame(self, frame: int) -> bool:
-        if not 0 <= frame < self.frame_count:
-            return False
+    @property
+    def has_b_frames(self) -> bool:
+        """Whether the probe found any B-frame at all.
+
+        Answered from the window scanned in the middle of the clip, which is
+        where an encode's normal frame pattern lives. A file with B-frames has
+        them everywhere; one without has none anywhere.
+        """
         if not self.supports_frame_types:
             return False
+        return "B" in self._pict_cache.values()
+
+    def picture_type(self, frame: int) -> str | None:
+        if not 0 <= frame < self.frame_count:
+            return None
+        if not self.supports_frame_types:
+            return None
         if frame not in self._pict_cache:
             self._scan_pict_types(frame)
-        return self._pict_cache.get(frame) == "B"
+        return self._pict_cache.get(frame)
 
     # -- luma ------------------------------------------------------------
 
@@ -254,7 +266,7 @@ class FfmpegSource:
                     "-frames:v",
                     "1",
                     "-vf",
-                    f"{crop},scale=64:36,format=gray",
+                    f"{crop},scale={LUMA_SAMPLE[0]}:{LUMA_SAMPLE[1]},format=gray",
                     "-f",
                     "rawvideo",
                     "-",

@@ -196,7 +196,7 @@ def test_seeded_selection_stays_in_the_window():
 
 
 def test_refine_keeps_acceptable_frames_untouched():
-    frames, rejected = selector.refine([10, 20, 30], 1000, lambda _f: True)
+    frames, rejected, _ = selector.refine([10, 20, 30], 1000, lambda _f: True)
 
     assert frames == [10, 20, 30]
     assert rejected == []
@@ -211,7 +211,7 @@ def test_refine_nudges_forward_to_the_next_acceptable_frame():
     """
     acceptable = {13, 24, 30}
 
-    frames, rejected = selector.refine([10, 20, 30], 1000, lambda f: f in acceptable)
+    frames, rejected, _ = selector.refine([10, 20, 30], 1000, lambda f: f in acceptable)
 
     assert frames == [13, 24, 30]
     assert rejected == []
@@ -224,7 +224,7 @@ def test_refine_never_searches_backwards():
     Both candidates sit inside MAX_NUDGE of the requested frame, so the limit
     is not what decides this.
     """
-    frames, _ = selector.refine([100], 1000, lambda f: f in {50, 130})
+    frames, _, _ = selector.refine([100], 1000, lambda f: f in {50, 130})
 
     assert frames == [130]
 
@@ -234,36 +234,79 @@ def test_refine_does_not_reuse_a_frame():
     comparison quietly contains the same picture twice."""
     acceptable = {500}
 
-    frames, rejected = selector.refine([498, 499], 1000, lambda f: f in acceptable)
+    frames, rejected, _ = selector.refine([498, 499], 1000, lambda f: f in acceptable)
 
     assert frames == [500]
     assert rejected == [499]
 
 
 def test_refine_reports_positions_it_could_not_resolve():
-    frames, rejected = selector.refine([10, 500], 1000, lambda f: f == 10)
+    frames, rejected, _ = selector.refine([10, 500], 1000, lambda f: f == 10)
 
     assert frames == [10]
     assert rejected == [500]
 
 
-def test_refine_respects_the_nudge_limit():
-    """Beyond a couple of seconds we are in a different shot, not the one asked for."""
-    frames, rejected = selector.refine([100], 10_000, lambda f: f == 100 + selector.MAX_NUDGE + 1)
+def test_refine_respects_an_explicit_nudge_limit():
+    frames, rejected, _ = selector.refine(
+        [100], 10_000, lambda f: f == 100 + selector.MIN_NUDGE + 1, max_nudge=selector.MIN_NUDGE
+    )
 
     assert frames == []
     assert rejected == [100]
 
 
+def test_the_nudge_budget_scales_with_the_spacing():
+    """A dark scene runs for minutes, and 48 frames is two seconds.
+
+    With a fixed budget, asking for three frames of a night-lit film returned
+    one: the other two positions landed in the dark and there was nowhere to
+    go. The budget is a share of the gap to the next requested position, so it
+    grows with the film and with how few frames were asked for.
+    """
+    frames, rejected, _ = selector.refine([1000, 100_000], 200_000, lambda f: f >= 2000)
+
+    assert rejected == []
+    # Sampled rather than walked past the first two seconds, so it lands on the
+    # first candidate at or after the acceptable point, not exactly on it.
+    assert 2000 <= frames[0] < 2000 + selector.COARSE_STEP
+
+
+def test_a_nudged_frame_cannot_reach_the_next_requested_one():
+    """Otherwise two samples become one moment and the comparison has a hole."""
+    frames, rejected, _ = selector.refine([1000, 2000], 100_000, lambda f: f >= 1999)
+
+    assert rejected == [1000], "it should give up rather than land on its neighbour"
+    assert frames == [2000], "the second position resolves to itself"
+
+
+def test_a_frame_that_travels_a_long_way_is_reported():
+    """Moving a few frames is the rule working; moving half a minute is a
+    different moment, and the person should be told."""
+    target = 1000 + selector.NOTABLE_MOVE
+    _, _, moved = selector.refine([1000], 200_000, lambda f: f >= target)
+
+    assert len(moved) == 1
+    was, now = moved[0]
+    assert was == 1000
+    assert target <= now < target + selector.COARSE_STEP
+
+
+def test_a_short_move_is_not_worth_mentioning():
+    _, _, moved = selector.refine([1000], 200_000, lambda f: f >= 1003)
+
+    assert moved == []
+
+
 def test_refine_does_not_run_past_the_end_of_the_clip():
-    frames, rejected = selector.refine([995], 1000, lambda _f: False)
+    frames, rejected, _ = selector.refine([995], 1000, lambda _f: False)
 
     assert frames == []
     assert rejected == [995]
 
 
 def test_refine_output_is_sorted():
-    frames, _ = selector.refine([50, 10], 1000, lambda _f: True)
+    frames, _, _ = selector.refine([50, 10], 1000, lambda _f: True)
 
     assert frames == sorted(frames)
 

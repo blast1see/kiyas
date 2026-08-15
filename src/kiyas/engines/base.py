@@ -43,6 +43,18 @@ DARK_LUMA_THRESHOLD = 0.10
 #: frames depending on which engine ran.
 ACTIVE_AREA = 0.6
 
+#: Size the picture is reduced to before brightness is measured, and the reason
+#: it is shared rather than chosen per engine.
+#:
+#: The question is "is this essentially black", not what the histogram looks
+#: like, so a thumbnail answers it and decoding a full 4K frame to find out
+#: does not. Shared because measuring the *same* reduction is what makes the
+#: engines agree: they must also reduce to full-range grey, or a limited-range
+#: plane puts black at 16/255 and the same threshold means two different
+#: things. Measured on a real remux before this was shared: opposite verdicts
+#: on two frames out of six.
+LUMA_SAMPLE = (64, 36)
+
 
 class EngineError(RuntimeError):
     """Raised when an engine cannot do what was asked of it."""
@@ -80,11 +92,23 @@ class PreparedSource(Protocol):
 
     @property
     def supports_frame_types(self) -> bool:
-        """Whether :meth:`is_b_frame` returns real information.
+        """Whether :meth:`picture_type` returns real information.
 
         An engine that cannot tell picture types must say so rather than
         guessing, so the orchestrator can warn that B-frame selection is off
         instead of silently comparing I-frames.
+        """
+        ...
+
+    @property
+    def has_b_frames(self) -> bool:
+        """Whether this encode contains B-frames at all.
+
+        Not every one does: a WEB-DL encoded for low latency can be entirely
+        I and P frames, and on one the B-frame rule rejects every frame in the
+        file. The orchestrator asks first so it can fall back to "not an
+        I-frame" -- which is what the rule was ever about -- rather than
+        refusing to produce a comparison.
         """
         ...
 
@@ -99,7 +123,9 @@ class PreparedSource(Protocol):
         """
         ...
 
-    def is_b_frame(self, frame: int) -> bool: ...
+    def picture_type(self, frame: int) -> str | None:
+        """``I``, ``P``, ``B``, or ``None`` when it cannot be read."""
+        ...
 
     def mean_luma(self, frame: int) -> float:
         """Average luma in [0, 1]."""

@@ -90,8 +90,12 @@ class MpvSource:
     def has_overlay(self) -> bool:
         return self._overlay
 
-    def is_b_frame(self, frame: int) -> bool:
-        return self._measure.is_b_frame(frame)
+    @property
+    def has_b_frames(self) -> bool:
+        return self._measure.has_b_frames
+
+    def picture_type(self, frame: int) -> str | None:
+        return self._measure.picture_type(frame)
 
     def mean_luma(self, frame: int) -> float:
         return self._measure.mean_luma(frame)

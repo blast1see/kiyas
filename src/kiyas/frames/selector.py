@@ -14,7 +14,7 @@ the search.
 from __future__ import annotations
 
 import random
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from fractions import Fraction
 
@@ -125,13 +125,46 @@ def select(selection: FrameSelection, total: int, fps: Fraction) -> list[int]:
     return sorted(set(frames))
 
 
-#: How far forward :func:`refine` will look for an acceptable frame.
+#: The least :func:`refine` will look forward, whatever the spacing.
 #:
-#: Two seconds at 24fps. A B-frame is never more than a GOP away (a couple of
-#: dozen frames at most), and a dark stretch longer than this is a deliberate
-#: scene rather than a fade -- at which point moving further has drifted to a
-#: different shot and stopped being the frame the user asked for.
-MAX_NUDGE = 48
+#: Two seconds at 24fps, which is all the B-frame rule ever needs: a B-frame is
+#: never more than a GOP away.
+MIN_NUDGE = 48
+
+#: ...but the dark-frame rule needs orders of magnitude more, and this is the
+#: third time an absolute threshold in frames has been wrong here.
+#:
+#: A dark *scene* runs for minutes, not for two seconds. With 48 frames of
+#: budget, asking for three frames of a night-lit film returned one -- the
+#: other two positions landed in the dark and there was nowhere to go. The
+#: budget is a share of the distance to the next requested position instead, so
+#: it scales with the film and with how many frames were asked for, and a
+#: nudged frame can never reach the position after it.
+NUDGE_SHARE = 0.25
+
+#: How far a frame can move before it is worth mentioning. Moving a few frames
+#: is the rule working; moving thirty seconds means the answer is a different
+#: moment from the one that was asked for, and the person should know.
+NOTABLE_MOVE = 240
+
+#: Past :data:`MIN_NUDGE`, candidates are sampled rather than walked.
+#:
+#: The two rules want different granularities and it costs to pretend
+#: otherwise. A B-frame is decided frame by frame, so the first stretch is
+#: walked one at a time. Brightness is a property of a *shot*: it does not
+#: change between adjacent frames, and checking every one of several thousand
+#: is thousands of probes for an answer that changes about once a second. With
+#: the ffmpeg engine each probe is a process launch, so walking a
+#: three-thousand-frame budget took longer than the rest of the run put
+#: together -- measured, on a 4K WEB-DL, before this existed.
+COARSE_STEP = 24
+
+
+def _candidates(start: int, budget: int, limit: int) -> Iterator[int]:
+    """Frames to try, nearest first: every one, then every COARSE_STEP."""
+    close = min(start + MIN_NUDGE + 1, limit)
+    yield from range(start, close)
+    yield from range(close, min(start + budget + 1, limit), COARSE_STEP)
 
 
 def refine(
@@ -139,26 +172,39 @@ def refine(
     total: int,
     acceptable: Callable[[int], bool],
     *,
-    max_nudge: int = MAX_NUDGE,
-) -> tuple[list[int], list[int]]:
+    max_nudge: int | None = None,
+) -> tuple[list[int], list[int], list[tuple[int, int]]]:
     """Nudge each frame forward until ``acceptable`` says yes.
 
-    Returns ``(frames, rejected)`` where ``rejected`` lists the original
-    positions no acceptable frame was found near. Callers report those rather
-    than silently capturing a bad frame or silently dropping a good position.
+    Returns ``(frames, rejected, moved)``: the positions that worked, the ones
+    where nothing acceptable was found, and ``(from, to)`` for anything that
+    travelled far enough to be a different moment. Callers report the last two
+    rather than silently capturing a bad frame or silently dropping a good
+    position.
+
+    ``max_nudge`` defaults to a share of the gap to the next requested frame.
+    Passing a number overrides that, which is what the tests do.
 
     Frames are searched forward only. Searching backwards as well would let two
     adjacent samples converge on the same frame from opposite directions, and
     the resulting duplicate is invisible until it shows up twice in the
     published comparison.
     """
+    ordered = sorted(frames)
     resolved: list[int] = []
     rejected: list[int] = []
+    moved: list[tuple[int, int]] = []
     taken: set[int] = set()
 
-    for frame in frames:
+    for index, frame in enumerate(ordered):
+        if max_nudge is not None:
+            budget = max_nudge
+        else:
+            following = ordered[index + 1] if index + 1 < len(ordered) else total
+            budget = max(MIN_NUDGE, int((following - frame) * NUDGE_SHARE))
+
         found = None
-        for candidate in range(frame, min(frame + max_nudge + 1, total)):
+        for candidate in _candidates(frame, budget, total):
             if candidate in taken:
                 continue
             if acceptable(candidate):
@@ -169,8 +215,10 @@ def refine(
         else:
             resolved.append(found)
             taken.add(found)
+            if found - frame >= NOTABLE_MOVE:
+                moved.append((frame, found))
 
-    return sorted(resolved), rejected
+    return sorted(resolved), rejected, moved
 
 
 def describe(frames: list[int], fps: Fraction) -> list[str]:

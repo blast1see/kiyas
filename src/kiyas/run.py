@@ -163,6 +163,20 @@ def _acceptability(prepared: list, project: Project, warnings: list[str]):
         )
         want_b_frames = False
 
+    # An encode with no B-frames at all is not unusual -- a WEB-DL made for low
+    # latency can be entirely I and P -- and on one, "must be a B-frame" throws
+    # away every frame in the file. What the rule is actually for is avoiding
+    # I-frames, so that is what it falls back to. Refusing to produce a
+    # comparison because a file was encoded a common way is not a rule, it is a
+    # bug with a message attached.
+    flat = [p.name for p in prepared if want_b_frames and not p.has_b_frames]
+    if flat:
+        warnings.append(
+            f"{', '.join(flat)} contains no B-frames at all, so frames are chosen by avoiding "
+            f"I-frames instead. That is what the rule is for: I-frames get a disproportionate "
+            f"share of the bitrate and flatter the weaker encode."
+        )
+
     if not want_b_frames and not want_bright:
         return None
 
@@ -170,8 +184,13 @@ def _acceptability(prepared: list, project: Project, warnings: list[str]):
         for source in prepared:
             if frame >= source.frame_count:
                 return False
-            if want_b_frames and not source.is_b_frame(frame):
-                return False
+            if want_b_frames:
+                kind = source.picture_type(frame)
+                if source.has_b_frames:
+                    if kind != "B":
+                        return False
+                elif kind == "I":
+                    return False
             if want_bright and source.mean_luma(frame) < DARK_LUMA_THRESHOLD:
                 return False
         return True
@@ -260,16 +279,24 @@ def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:
         judges = prepared[:1] if project.mode is Mode.SETTINGS else prepared
         acceptable = _acceptability(judges, project, warnings)
         if acceptable is not None and project.frames.method is not FrameMethod.MANUAL:
-            frames, rejected = selector.refine(frames, total, acceptable)
+            frames, rejected, moved = selector.refine(frames, total, acceptable)
             if rejected:
                 warnings.append(
                     f"{len(rejected)} requested position(s) had no usable frame nearby "
                     f"and were dropped: {rejected}"
                 )
+            for was, now in moved:
+                warnings.append(
+                    f"frame {was} moved to {now} ({(now - was) / float(target_fps):.0f}s later) "
+                    f"to satisfy the frame rules; it is a different moment from the one the "
+                    f"even spacing picked."
+                )
         if not frames:
             raise RunError(
-                "no usable frames were found. Try turning off b_frames_only or "
-                "skip_dark in [frames]."
+                "no usable frames were found. Every candidate was rejected by the rules in "
+                "[frames]. Turning off skip_dark helps on a film that is mostly night, and "
+                "turning off b_frames_only helps on an encode this cannot read picture types "
+                "from."
             )
 
         project.output.mkdir(parents=True, exist_ok=True)

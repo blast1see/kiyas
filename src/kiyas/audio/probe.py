@@ -20,6 +20,12 @@ from ..media.probe import ProbeError, run_ffprobe
 #: MediaInfo on a long track is fast; a hang means something else is wrong.
 _MEDIAINFO_TIMEOUT = 120.0
 
+#: Codecs whose name alone settles whether they are lossless. DTS does not
+#: belong here -- see :meth:`AudioTrack.is_lossless`.
+_LOSSLESS_CODECS = frozenset(
+    {"flac", "truehd", "mlp", "alac", "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_bluray"}
+)
+
 
 @dataclass(frozen=True, slots=True)
 class AudioTrack:
@@ -54,7 +60,20 @@ class AudioTrack:
 
     @property
     def is_lossless(self) -> bool:
-        return self.codec.lower() in {"flac", "truehd", "mlp", "pcm_s16le", "pcm_s24le", "alac"}
+        """Whether the samples that come out are the samples that went in.
+
+        The codec name alone is not enough for DTS. ffprobe reports every
+        variant as ``dts`` and puts the part that matters in the profile:
+        ``DTS-HD MA`` is lossless, plain ``DTS`` and ``DTS-HD HRA`` are not.
+        Going by the name calls the most common lossless track on a Blu-ray
+        lossy and then refuses to measure its bit depth -- which is exactly the
+        file people want that number for. Seen on a remux whose container
+        claimed 16-bit for a DTS-HD MA track.
+        """
+        codec = self.codec.lower()
+        if codec == "dts":
+            return "ma" in (self.profile or "").lower().replace("-", " ").split()
+        return codec in _LOSSLESS_CODECS
 
 
 def _int_or_none(value) -> int | None:

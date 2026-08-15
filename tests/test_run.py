@@ -255,7 +255,9 @@ def test_b_frame_rule_moves_the_selection(tmp_path, two_clips):
         if not all(p.supports_frame_types for p in prepared):
             pytest.skip("engine cannot report picture types")
         for frame in result.frames:
-            assert all(p.is_b_frame(frame) for p in prepared), f"frame {frame} is not a B-frame"
+            assert all(p.picture_type(frame) == "B" for p in prepared), (
+                f"frame {frame} is not a B-frame"
+            )
     finally:
         for p in prepared:
             p.close()

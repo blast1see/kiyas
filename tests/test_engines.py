@@ -215,7 +215,7 @@ def test_margin_never_produces_a_negative_or_zero_length(total):
 def test_ffmpeg_admits_when_it_cannot_read_picture_types(monkeypatch):
     """Silence here used to look like "every frame is an I-frame".
 
-    A failed ffprobe scan cached nothing, so is_b_frame answered False for
+    A failed ffprobe scan cached nothing, so picture_type answered None for
     everything, the selector rejected every candidate, and the user got "no
     usable frames were found" with no explanation. Now the engine says it
     cannot tell, and the orchestrator warns instead.
@@ -224,7 +224,7 @@ def test_ffmpeg_admits_when_it_cannot_read_picture_types(monkeypatch):
     monkeypatch.setattr(prepared, "_scan_pict_types", lambda *_a, **_k: None)
 
     assert prepared.supports_frame_types is False
-    assert prepared.is_b_frame(10) is False
+    assert prepared.picture_type(10) is None
 
 
 def test_ffmpeg_reports_picture_types_when_the_scan_works(monkeypatch):
@@ -484,7 +484,7 @@ def test_picture_types_are_readable(engine, clips):
     if not prepared.supports_frame_types:
         pytest.skip(f"{engine.name} does not report picture types")
 
-    found = [n for n in range(2, 40) if prepared.is_b_frame(n)]
+    found = [n for n in range(2, 40) if prepared.picture_type(n) == "B"]
 
     assert found, "no B-frames found in a clip encoded with -bf 3"
 

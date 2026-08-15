@@ -61,9 +61,23 @@ def test_the_lfe_channel_is_named_in_a_5_1_layout():
 
 def test_lossless_codecs_are_recognised():
     assert _track(codec="flac").is_lossless
-    assert _track(codec="truehd").is_lossless
+    assert _track(codec="truehd", profile="Dolby TrueHD + Dolby Atmos").is_lossless
     assert not _track(codec="ac3").is_lossless
     assert not _track(codec="eac3").is_lossless
+
+
+@pytest.mark.parametrize(
+    ("profile", "lossless"),
+    [("DTS-HD MA", True), ("DTS-HD HRA", False), ("DTS", False), (None, False)],
+)
+def test_dts_is_decided_by_its_profile_not_its_name(profile, lossless):
+    """ffprobe calls every variant `dts` and puts the answer in the profile.
+
+    Going by the name calls the most common lossless track on a Blu-ray lossy,
+    and then refuses to measure its bit depth -- which is the number people
+    most want for exactly that file.
+    """
+    assert _track(codec="dts", profile=profile).is_lossless is lossless
 
 
 def test_the_offset_summary_states_a_direction():

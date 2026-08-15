@@ -24,7 +24,7 @@ from pathlib import Path
 
 from ..config import Source, Tonemap
 from ..media.probe import HdrFormat, VideoInfo, probe
-from .base import ACTIVE_AREA, EngineError, RenderSettings
+from .base import ACTIVE_AREA, LUMA_SAMPLE, EngineError, RenderSettings
 
 #: lsmas and BestSource report indexing progress through VapourSynth's logger,
 #: one message per percent. Left alone that is 200 lines of noise per source,
@@ -126,6 +126,10 @@ _TRANSFER_ST2084 = 16
 _PRIMARIES_BT709 = 1
 _PRIMARIES_BT2020 = 9
 
+#: How many consecutive frames to look at when asking whether an encode uses
+#: B-frames. A GOP is a few dozen frames, so this covers more than one.
+_B_FRAME_PROBE = 96
+
 #: PNG is lossless at every setting, so this only trades file size against
 #: time. 1 is awsmfunc's default and produces files small enough to upload
 #: without making a 4K capture noticeably slow.
@@ -154,6 +158,7 @@ class VapourSynthSource:
     def __init__(self, clip, name: str, info: VideoInfo, assumptions: list[str], *, overlay: bool):
         self._clip = clip
         self._stats = None
+        self._has_b_frames: bool | None = None
         self._overlay = overlay
         self.name = name
         self.info = info
@@ -169,13 +174,28 @@ class VapourSynthSource:
     def has_overlay(self) -> bool:
         return self._overlay
 
-    def is_b_frame(self, frame: int) -> bool:
+    @property
+    def has_b_frames(self) -> bool:
+        """Whether this encode contains B-frames at all.
+
+        Sampled from the middle of the clip, where an encode's normal frame
+        pattern lives. A file with B-frames has them everywhere; a WEB-DL
+        encoded without them has none anywhere, and on one the B-frame rule
+        would otherwise reject every frame in the file.
+        """
+        if self._has_b_frames is None:
+            middle = self.frame_count // 2
+            span = range(middle, min(middle + _B_FRAME_PROBE, self.frame_count))
+            self._has_b_frames = any(self.picture_type(frame) == "B" for frame in span)
+        return self._has_b_frames
+
+    def picture_type(self, frame: int) -> str | None:
         if not 0 <= frame < self.frame_count:
-            return False
+            return None
         pict_type = self._clip.get_frame(frame).props.get("_PictType")
         if isinstance(pict_type, bytes):
             pict_type = pict_type.decode("ascii", "replace")
-        return pict_type == "B"
+        return str(pict_type) if pict_type else None
 
     def mean_luma(self, frame: int) -> float:
         """Average luma of the active picture area, in [0, 1].
@@ -186,7 +206,21 @@ class VapourSynthSource:
         seen on a real 2.39:1 remux, where a well-lit frame measured below the
         threshold purely because of the letterbox.
 
-        PlaneStats is attached lazily and only once: it is a filter, and
+        **Reduced to full-range 8-bit grey first, as the ffmpeg engine does.**
+        Reading PlaneStats off the clip in its own format looks simpler and
+        quietly measures a different quantity: a limited-range YUV plane puts
+        black at 16/255, so the same frame reads well above what ffmpeg
+        reports, and the same threshold means two different things. Measured on
+        a real remux before this: the engines returned *opposite* verdicts on
+        two frames out of six, which is the same project picking different
+        frames depending on which engine ran.
+
+        They still do not agree exactly -- VapourSynth reads about 0.022 higher
+        across the board, from rounding in the crop rather than anything chosen
+        here -- but a constant offset that small sits well inside the margin
+        the threshold is picked at, and the verdicts now match.
+
+        The chain is attached lazily and only once: it is a filter, and
         rebuilding it per frame would discard the cache behind it.
         """
         if not 0 <= frame < self.frame_count:
@@ -194,7 +228,14 @@ class VapourSynthSource:
         if self._stats is None:
             import vapoursynth as vs
 
-            self._stats = vs.core.std.PlaneStats(_active_area(self._clip), plane=0)
+            small = vs.core.resize.Bicubic(
+                _active_area(self._clip),
+                width=LUMA_SAMPLE[0],
+                height=LUMA_SAMPLE[1],
+                format=vs.GRAY8,
+                range_s="full",
+            )
+            self._stats = vs.core.std.PlaneStats(small, plane=0)
         return float(self._stats.get_frame(frame).props["PlaneStatsAverage"])
 
     def write_frames(self, frames: list[int], directory: Path) -> list[Path]:
