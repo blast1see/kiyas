@@ -85,7 +85,8 @@ dropped next to a release must never be executed.
 unzip it and run `kiyas-gui.exe` for the window or `kiyas.exe` for the command
 line. No Python needed. It has the ffmpeg and mpv engines — VapourSynth is a
 stack of compiled plugins that installs into a Python environment, so that one
-needs a checkout.
+needs a checkout. Each release carries a `.sha256` beside the zip, written by
+the same runner that built it from the tagged commit.
 
 **A checkout**, for the VapourSynth engine and for working on it:
 

@@ -1,0 +1,67 @@
+name: Release
+
+# CI already builds the executable on every push, but it uploads it as a
+# workflow artifact: it expires in fourteen days and only a signed-in user can
+# download it. The README tells people to get a build from the releases page,
+# so something has to put one there.
+
+on:
+  push:
+    tags: ["v*"]
+  # For rebuilding a tag whose run failed, without moving the tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing tag to build and publish"
+        required: true
+
+permissions:
+  contents: write # creating a release writes to the repository
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -e ".[gui,build]"
+
+      # Before the twenty-minute part: this refuses a tag that disagrees with
+      # the packaged version, or a version the changelog says nothing about.
+      - name: The notes, and the check that comes with them
+        run: python packaging/release_notes.py ${{ inputs.tag || github.ref_name }} notes.md
+
+      - run: pyinstaller --noconfirm kiyas.spec
+
+      - name: The binary answers for itself
+        run: dist/kiyas/kiyas.exe --version
+
+      - name: Archive, and record what it hashes to
+        id: archive
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag || github.ref_name }}"
+          $name = "kiyas-$tag-windows-x64.zip"
+          # -Path dist/kiyas, not dist/kiyas/*: the archive should unzip into a
+          # folder rather than scatter six hundred files into Downloads.
+          Compress-Archive -Path dist/kiyas -DestinationPath $name
+          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name" | Out-File -Encoding ascii "$name.sha256"
+          "name=$name" >> $env:GITHUB_OUTPUT
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create ${{ inputs.tag || github.ref_name }}
+          "${{ steps.archive.outputs.name }}"
+          "${{ steps.archive.outputs.name }}.sha256"
+          --title "kiyas ${{ inputs.tag || github.ref_name }}"
+          --notes-file notes.md

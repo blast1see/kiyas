@@ -54,9 +54,11 @@ never the one that runs.
 - The packaged build has the ffmpeg and mpv engines. VapourSynth is a stack of
   compiled plugins that installs into a Python environment, so it needs a
   checkout and `bootstrap.ps1`.
-- mpv renders into a window and a window cannot be larger than the display, so
-  a 4K source is captured smaller unless `fullscreen` is set. Whatever size
-  came out is reported.
+- A settings comparison is captured at display size rather than the source's.
+  That is what it is comparing: ask mpv for a source-resolution capture instead
+  and all four tone curves come back byte-identical and an upscaling shader
+  does not fire. Use `fullscreen`, or set `width` for the same size on every
+  machine; whatever size came out is reported.
 - The offset measurement is a single correlation and assumes the two tracks are
   a constant distance apart. Install
   [AudioSyncTool](https://github.com/blast1see/AudioSyncTool) when drift
