@@ -408,6 +408,40 @@ def test_hdr_source_is_tonemapped(engine, clips, tmp_path):
 
 
 @pytest.mark.integration
+def test_hdr10_plus_is_a_different_curve_and_only_that(clips, tmp_path):
+    """What the hdr10plus option still buys, now that we know what it does not.
+
+    It selects the ST2094-40 tone curve. It does *not* apply HDR10+ per-scene
+    metadata -- measured against vs-placebo 2.0.4, where choosing HDR10+ as the
+    metadata source and stripping the HDR10Plus frame property both leave the
+    output bit-identical.
+
+    So the curve is the whole of it, and this test holds that: merge the two
+    branches as a "simplification" and every hdr10plus comparison silently
+    becomes an hdr10 one. A future vs-placebo that honours the metadata would
+    not fail this test -- it would need a clip carrying HDR10+, which the
+    fixtures here cannot make.
+    """
+    from kiyas.engines.vapoursynth import VapourSynthEngine
+
+    engine = VapourSynthEngine()
+    if not engine.available():
+        pytest.skip("the VapourSynth stack is not installed")
+
+    static = engine.prepare(
+        _source(path=clips["hdr"], name="x", tonemap=Tonemap.HDR10), overlay=False
+    )
+    curve = engine.prepare(
+        _source(path=clips["hdr"], name="x", tonemap=Tonemap.HDR10PLUS), overlay=False
+    )
+
+    a = static.write_frames([12], tmp_path / "static")[0]
+    b = curve.write_frames([12], tmp_path / "curve")[0]
+
+    assert _pixels(a) != _pixels(b), "hdr10plus collapsed into hdr10"
+
+
+@pytest.mark.integration
 def test_trim_shifts_which_frame_is_captured(engine, clips, tmp_path):
     """Frame 10 of a clip trimmed by 10 must be frame 20 of the original.
 

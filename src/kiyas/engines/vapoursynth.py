@@ -401,8 +401,23 @@ class VapourSynthEngine:
                 **common,
             )
         elif mode is Tonemap.HDR10PLUS:
-            # ST2094-40 follows the per-scene metadata HDR10+ carries, which is
-            # the entire reason to prefer it over a static curve.
+            # This selects the ST2094-40 tone *curve*. It does not apply the
+            # per-scene metadata, and this comment used to claim it did.
+            #
+            # Measured against vs-placebo 2.0.4, on a real remux carrying HDR10+
+            # (BestSource exposes it as an ``HDR10Plus`` frame property, 56
+            # bytes a frame; lsmas does not expose it at all):
+            #
+            #   metadata=HDR10 vs metadata=HDR10+   ->  identical output
+            #   removing the HDR10Plus frame prop   ->  identical output
+            #   changing tone_mapping_function      ->  different output
+            #
+            # So the curve is live and the metadata path is not. Passing
+            # ``metadata`` is kept because it costs nothing and a later
+            # vs-placebo may honour it -- but until someone measures that
+            # again, this is a different curve applied statically, and calling
+            # it dynamic tone mapping in a comparison would be a lie about what
+            # the reader is looking at.
             clip = core.placebo.Tonemap(
                 clip,
                 src_csp=_CSP_HDR10,

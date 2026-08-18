@@ -393,9 +393,16 @@ class FfmpegEngine:
                 f"HDR10 base layer instead."
             )
         if mode is Tonemap.HDR10PLUS:
+            # Careful what this promises. The VapourSynth engine applies the
+            # ST2094-40 curve, which this chain has no equivalent for -- but it
+            # does not apply HDR10+ per-scene metadata either, measured against
+            # vs-placebo 2.0.4. Sending someone there for the metadata would be
+            # sending them nowhere.
             raise EngineError(
-                f"{source.name}: the ffmpeg engine cannot use HDR10+ metadata. "
-                f"Use the VapourSynth engine, or set tonemap = 'hdr10'."
+                f"{source.name}: the ffmpeg engine has no ST2094-40 curve. "
+                f"Use the VapourSynth engine, or set tonemap = 'hdr10'. Neither "
+                f"engine applies HDR10+ per-scene metadata; both tone map the "
+                f"HDR10 base statically."
             )
         if mode is Tonemap.HDR10:
             filters.append(_TONEMAP_CHAIN)
