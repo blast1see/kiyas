@@ -253,10 +253,11 @@ def test_a_grid_that_does_not_match_is_an_error_not_a_guess(tmp_path):
 
 
 class _Response:
-    def __init__(self, status=200, payload=None, headers=None):
+    def __init__(self, status=200, payload=None, headers=None, text=""):
         self.status_code = status
         self._payload = payload or {}
         self.headers = headers or {}
+        self.text = text
 
     def json(self):
         return self._payload
@@ -267,13 +268,17 @@ class _Response:
 
 
 class _FakeSession:
-    def __init__(self, *, image_status=200, image_headers=None):
+    def __init__(
+        self, *, image_status=200, image_headers=None, collection_status=200, collection_text=""
+    ):
         self.headers = {}
         self.cookies = {"XSRF-TOKEN": "token-123", "BROWSER-ID": "browser-abc"}
         self.posts = []
         self.image_posts = []
         self._image_status = image_status
         self._image_headers = image_headers or {}
+        self._collection_status = collection_status
+        self._collection_text = collection_text
 
     def get(self, url, **_kwargs):
         return _Response()
@@ -284,12 +289,14 @@ class _FakeSession:
             return _Response(self._image_status, headers=self._image_headers)
         self.posts.append((url, data))
         return _Response(
+            status=self._collection_status,
+            text=self._collection_text,
             payload={
                 "key": "ABC123",
                 "collectionUuid": "coll-1",
                 "images": [["a0", "b0"], ["a1", "b1"]],
                 "completeImageUuids": [],
-            }
+            },
         )
 
 
@@ -350,6 +357,40 @@ def test_other_400s_stop_the_upload(tmp_path):
 
     with pytest.raises(UploadError, match="TOO_LARGE"):
         slowpics.upload(_comparison(tmp_path), session=session)
+
+
+def test_a_rejected_collection_quotes_what_the_server_said(tmp_path):
+    """A 400 with the body thrown away is a dead end.
+
+    "400 Client Error: Bad Request" says a field was wrong and not which one,
+    and the reason lives in the body. This came up on a real upload that was
+    refused with no way to find out why except reading the source.
+    """
+    session = _FakeSession(
+        collection_status=400,
+        collection_text='{"tmdbId":"must be MOVIE_<id> or TV_<id>"}',
+    )
+
+    with pytest.raises(UploadError, match="must be MOVIE_"):
+        slowpics.upload(_comparison(tmp_path), session=session)
+
+
+def test_a_rejection_with_no_body_still_reads_as_one_sentence(tmp_path):
+    session = _FakeSession(collection_status=400)
+
+    with pytest.raises(UploadError, match="refused the collection") as excinfo:
+        slowpics.upload(_comparison(tmp_path), session=session)
+    assert "the server said" not in str(excinfo.value)
+
+
+def test_an_html_error_page_is_truncated(tmp_path):
+    """A server having a bad day answers with a page, not a field error."""
+    session = _FakeSession(collection_status=400, collection_text="<html>" + "x" * 4000)
+
+    with pytest.raises(UploadError) as excinfo:
+        slowpics.upload(_comparison(tmp_path), session=session)
+    assert len(str(excinfo.value)) < 1200
+    assert str(excinfo.value).endswith("...")
 
 
 def test_missing_xsrf_token_is_explained(tmp_path):

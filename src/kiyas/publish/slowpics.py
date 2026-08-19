@@ -54,6 +54,11 @@ class UploadResult:
     skipped: int
 
 
+#: How much of a failed response to quote back. Enough for a JSON field error,
+#: short of an HTML error page.
+_ERROR_BODY_LIMIT = 600
+
+
 def _headers() -> dict[str, str]:
     return {
         "Accept": "*/*",
@@ -112,6 +117,27 @@ def build_payload(
     if tmdb_id:
         payload["tmdbId"] = tmdb_id
     return payload
+
+
+def _server_said(response) -> str:
+    """The body of a failed response, which is where the reason lives.
+
+    ``raise_for_status`` produces "400 Client Error: Bad Request for url: ...",
+    which says a field was wrong and not which one. The server does say, in the
+    body, and that was being thrown away -- leaving a caller with a failure they
+    cannot act on and no way to find out more except reading this source.
+
+    Truncated because a server having a bad day can answer with an HTML error
+    page, and a wall of markup in a one-line error is its own kind of unhelpful.
+    """
+    if response is None:
+        return ""
+    body = (getattr(response, "text", "") or "").strip()
+    if not body:
+        return ""
+    if len(body) > _ERROR_BODY_LIMIT:
+        body = body[:_ERROR_BODY_LIMIT] + "..."
+    return "\nthe server said: " + body
 
 
 def build_hashes(comparison: Comparison) -> dict[str, str]:
@@ -222,12 +248,15 @@ def upload(
     endpoint = "comparison" if comparison.is_comparison else "collection"
     if progress:
         progress("creating the collection")
+    created = None
     try:
         created = client.post(f"{BASE_URL}/upload/{endpoint}", data=data, timeout=_TIMEOUT)
         created.raise_for_status()
         response = created.json()
     except Exception as exc:  # noqa: BLE001
-        raise UploadError(f"slow.pics refused the collection: {exc}") from exc
+        raise UploadError(
+            f"slow.pics refused the collection: {exc}{_server_said(created)}"
+        ) from exc
 
     key = response.get("key")
     collection_uuid = response.get("collectionUuid")
