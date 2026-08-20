@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.1.3
+
+### One refusal now stops the whole upload
+
+0.1.1 stopped retrying a refused image, which took a four-image comparison from
+twenty requests against a blocked address down to four. Four was still one per
+image, and the refusal is not about the image — it is about your address, so it
+is the same answer for all of them. A 24-image comparison was still putting 48
+requests into an edge that had already said no.
+
+The first worker to be refused now tells the others, and they stop without
+sending. Measured, with the change removed and put back: 48 requests against
+at most six.
+
+### A block is temporary, and 0.1.1 said it was not
+
+0.1.1 read Cloudflare's error number so it could tell a ban from a rate limit,
+on the understanding that a rate limit lapses and a ban does not — Cloudflare's
+own 1006 page says the owner of the site "has banned your IP address", which
+does not sound like something that expires. It expires. An address refused with
+1006 was serving requests again the same day, without anyone being asked.
+
+So the advice attached to it was wrong in the direction that costs the most:
+someone whose block would have cleared on its own was told that another network
+was the only way through. Both kinds now say to wait.
+
+### Why this keeps happening
+
+Nothing about the address or the client is special. slow.pics is one person's
+free service behind Cloudflare, and what earns a block is a burst — which is
+what an upload of two dozen 6 MB screenshots looks like when six of them start
+at once, some time out, and each timeout is retried five times. Every fix since
+0.1.0 has been a different multiplier on that same burst, and this is the last
+of them.
+
 ## 0.1.2
 
 Reads the Cloudflare error number correctly, which 0.1.1 did not.

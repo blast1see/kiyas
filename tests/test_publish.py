@@ -10,6 +10,7 @@ without a human looking at the result.
 from __future__ import annotations
 
 import json
+import re
 import threading
 from fractions import Fraction
 
@@ -336,10 +337,43 @@ class _FakeSession:
             payload={
                 "key": "ABC123",
                 "collectionUuid": "coll-1",
-                "images": [["a0", "b0"], ["a1", "b1"]],
+                "images": _grid_for(data),
                 "completeImageUuids": [],
             },
         )
+
+
+def _grid_for(data) -> list[list[str]]:
+    """The image grid the real server would answer with, sized to the request.
+
+    This was a hardcoded 2x2. Every test used a 2x2 comparison, so it agreed
+    with all of them and silently refused anything larger -- a test that built
+    a 24-frame comparison got "the grid does not match", sent zero images, and
+    passed its assertion about how few images were sent. It was measuring the
+    fixture, not the code.
+
+    Reading the shape back out of the posted form is what makes the fake
+    answer the question it was actually asked.
+    """
+    data = data or {}
+    rows = 1 + max(
+        (int(m.group(1)) for key in data if (m := re.match(r"comparisons\[(\d+)\]\.name$", key))),
+        default=-1,
+    )
+    if rows:
+        sources = 1 + max(
+            int(m.group(1))
+            for key in data
+            if (m := re.match(r"comparisons\[0\]\.images\[(\d+)\]\.name$", key))
+        )
+        return [[f"uuid-{r}-{s}" for s in range(sources)] for r in range(rows)]
+
+    # A single-source collection: one row holding every image.
+    count = 1 + max(
+        (int(m.group(1)) for key in data if (m := re.match(r"images\[(\d+)\]\.name$", key))),
+        default=-1,
+    )
+    return [[f"uuid-0-{i}" for i in range(count)]]
 
 
 def test_upload_returns_the_collection_url(tmp_path):
@@ -551,10 +585,32 @@ def test_a_ban_and_a_rate_limit_are_not_given_the_same_advice(tmp_path):
     with pytest.raises(UploadError) as limit:
         slowpics.upload(_comparison(tmp_path), session=limited)
 
-    assert "Wait" not in str(ban.value)
-    assert "different network" in str(ban.value)
-    assert "Wait for it to lapse" in str(limit.value)
+    assert "temporarily banned" in str(ban.value)
+    assert "clears by itself" in str(ban.value)
     assert "rate limited" in str(limit.value)
+    assert "Wait for it to lapse" in str(limit.value)
+
+
+def test_a_ban_is_not_described_as_permanent(tmp_path):
+    """It reads permanent and measurably is not.
+
+    Cloudflare's 1006 page says the owner "has banned your IP address", and
+    this code said the same back, with the advice that another network was the
+    only way through. Then the banned address served 200s again the same day.
+    On this site 1006 is an automatic rule with a lifetime, and telling someone
+    their address is permanently blocked sends them looking for a VPN they do
+    not need.
+    """
+    session = _FakeSession(
+        collection_status=403, collection_text=CLOUDFLARE_1006, collection_headers=CF_HEADERS
+    )
+
+    with pytest.raises(UploadError) as excinfo:
+        slowpics.upload(_comparison(tmp_path), session=session)
+
+    message = str(excinfo.value)
+    assert "only way" not in message
+    assert "temporarily" in message
 
 
 def test_a_blocked_address_is_named_at_the_landing_page(tmp_path):
@@ -570,19 +626,45 @@ def test_a_blocked_address_is_named_at_the_landing_page(tmp_path):
     assert "<html" not in str(excinfo.value)
 
 
+def test_one_refusal_stops_the_whole_upload(tmp_path):
+    """The per-comparison multiplier, after the per-image one was fixed.
+
+    Not retrying a 403 brought twenty requests down to four -- one per image.
+    One per image is still wrong: the refusal is about the address, so it is
+    the same answer for every remaining image, and a 24-image comparison was
+    still putting 24 requests into an edge that had already said no. The first
+    worker to be refused now tells the others, and they stop without sending.
+
+    Six workers may already be in flight when the first answer arrives, so the
+    assertion is "well under one per image", not "exactly one".
+    """
+    session = _FakeSession(image_status=403, image_text=CLOUDFLARE_1006, image_headers=CF_HEADERS)
+    comparison = _comparison(tmp_path, frames=tuple(range(100, 100 + 24)))
+    assert comparison.total_images == 48
+
+    with pytest.raises(UploadError):
+        slowpics.upload(comparison, session=session)
+
+    assert len(session.image_posts) <= slowpics.MAX_PARALLEL_UPLOADS
+    assert len(session.image_posts) < comparison.total_images
+
+
 def test_a_forbidden_image_is_not_retried(tmp_path):
     """Retrying into a block is the traffic that turns a limit into a ban.
 
-    Five attempts per image across six workers is another twenty requests
-    arriving at an edge that has already refused this address, and not one of
-    them can succeed. The count is the assertion: four images, four requests.
+    One image and one source, so the count isolates the retry behaviour: the
+    "tell the other workers" rule above cannot mask it, because there are no
+    other workers. Five attempts against an edge that has already refused this
+    address cannot succeed, and are themselves the traffic that earns the ban.
     """
     session = _FakeSession(image_status=403, image_text=CLOUDFLARE_1006, image_headers=CF_HEADERS)
+    comparison = _comparison(tmp_path, sources=("Only",), frames=(100,))
+    assert comparison.total_images == 1
 
     with pytest.raises(UploadError) as excinfo:
-        slowpics.upload(_comparison(tmp_path), session=session)
+        slowpics.upload(comparison, session=session)
 
-    assert len(session.image_posts) == 4
+    assert len(session.image_posts) == 1
     assert "banned this IP address" in str(excinfo.value)
 
 

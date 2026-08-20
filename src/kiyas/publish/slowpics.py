@@ -231,11 +231,17 @@ _CF_RAY = re.compile(r"[0-9a-f]{16}-[A-Z]{3}")
 _CF_CODE = re.compile(r"""error[\s_-]*(?:code)?["']?\s*[:=-]?\s*(1\d{3})\b""", re.IGNORECASE)
 
 #: What Cloudflare's numbers mean, for the ones a publisher can actually hit.
-#: These say different things: 1015 lapses on its own, 1006 does not.
+#:
+#: 1006 reads as a permanent decision -- Cloudflare's own page says "the owner
+#: of this website has banned your IP address" -- and it was described that way
+#: here at first. Measured instead: an address refused with 1006 was serving
+#: 200s again the same day, without anyone being asked. On this site it is an
+#: automatic rule with a lifetime, not a person's decision, so the advice that
+#: goes with it is to wait rather than to go and find another network.
 _CF_MEANINGS = {
-    "1006": "slow.pics has banned this IP address",
-    "1007": "slow.pics has banned this IP address",
-    "1008": "slow.pics has banned this IP address",
+    "1006": "slow.pics has temporarily banned this IP address",
+    "1007": "slow.pics has temporarily banned this IP address",
+    "1008": "slow.pics has temporarily banned this IP address",
     "1015": "this IP address is being rate limited",
     "1020": "an access rule on slow.pics refused the request",
 }
@@ -283,11 +289,13 @@ def _edge_block(response) -> str:
         marks.append(f"ray {ray.group(0)}")
     detail = f" ({', '.join(marks)})" if marks else ""
 
-    # A ban has to be told apart from a rate limit. Waiting clears one and not
-    # the other, and someone who retries all evening against a 1006 is waiting
-    # for something that is not going to happen.
+    # Both kinds lapse, so the advice is to wait either way; what differs is
+    # how long, and a ban is worth naming as the more serious of the two so
+    # nobody spends the wait re-running the command.
     remedy = (
-        "Publishing from a different network is the only way through it."
+        "It clears by itself -- an address refused this way was serving "
+        "requests again the same day -- so leave it a while rather than "
+        "retrying. Another network works in the meantime."
         if number in {"1006", "1007", "1008"}
         else "Wait for it to lapse, or publish from a different network."
     )
@@ -482,11 +490,18 @@ def _send_images(client, collection_uuid, browser_id, pending, progress) -> None
     errors: list[str] = []
 
     pacer = _Pacer(MIN_UPLOAD_INTERVAL)
+    # Set by the first worker to be refused. Every other worker checks it
+    # before sending and gives up instead, so one refusal costs one request
+    # rather than one per remaining image. Not retrying a 403 fixed the
+    # per-image multiplier; this fixes the per-comparison one -- a 24-image
+    # comparison against a blocked address was still 24 requests, all of them
+    # arriving after the answer was already known.
+    blocked = threading.Event()
 
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL_UPLOADS) as pool:
         futures = {
             pool.submit(
-                _send_one, client, collection_uuid, browser_id, image_uuid, path, pacer
+                _send_one, client, collection_uuid, browser_id, image_uuid, path, pacer, blocked
             ): path
             for image_uuid, path in pending
         }
@@ -513,6 +528,7 @@ def _send_one(
     image_uuid: str,
     path: Path,
     pacer: _Pacer | None = None,
+    blocked: threading.Event | None = None,
 ) -> None:
     fields = {
         "collectionUuid": collection_uuid,
@@ -524,6 +540,11 @@ def _send_one(
     timeout = _upload_timeout(len(body))
 
     for attempt in range(MAX_ATTEMPTS):
+        # Checked before the pacer, so a worker that has been waiting its turn
+        # while another was refused does not go on to spend that turn.
+        if blocked is not None and blocked.is_set():
+            raise UploadError("not sent: the address was already refused")
+
         # Before every attempt, not just the first: a retry is another request
         # arriving at the same server, and retries are what turn a slow link
         # into a burst.
@@ -561,6 +582,12 @@ def _send_one(
             # attempts per image cannot succeed and are themselves the traffic
             # that turns a rate limit into a ban. Six workers each retrying
             # into a block is how the address got refused in the first place.
+            #
+            # Telling the other workers stops the remaining images too: the
+            # answer is about the address, so it is the same answer for all of
+            # them and there is nothing to learn by asking again.
+            if blocked is not None:
+                blocked.set()
             raise UploadError(f"refused{_explain(response) or ': HTTP 403'}")
 
         if response.status_code >= 400:

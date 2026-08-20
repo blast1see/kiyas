@@ -318,18 +318,28 @@ metadata, so slow.pics can say which ones it already holds. Re-running a
 publish that died halfway only sends what is missing.
 
 **Uploads are paced deliberately.** slow.pics is free, run by one person, and
-sits behind Cloudflare, which bans addresses that arrive in bursts — a 24-image
-comparison was enough to earn one. kiyas holds upload starts a fixed interval
-apart across all six workers, puts retries through the same pacing, and does
-not retry a refusal at all, since further attempts against a block cannot
-succeed and are themselves the traffic that turns a rate limit into a ban. It
-costs about ten seconds on a 24-image comparison.
+sits behind Cloudflare, which blocks addresses that arrive in bursts — a
+24-image comparison was enough to earn one. Three things keep kiyas under that
+line, and they matter in this order:
+
+- Upload starts are held a fixed interval apart across all six workers, and
+  retries go through the same pacing, because a retry is another request
+  arriving at the same server. About ten seconds on a 24-image comparison.
+- A refusal is never retried. Five further attempts against a block cannot
+  succeed and are themselves the traffic that turns a rate limit into a ban.
+- The first refusal stops the whole upload. The answer is about your address,
+  so it is the same answer for every remaining image.
+
+Together those turn the worst case for a 24-image comparison from around 240
+requests into at most six.
 
 If your address does get blocked, kiyas says so in one sentence: which
-Cloudflare error it is, and whether waiting will clear it. A rate limit lapses;
-a ban does not, and no amount of retrying will change either. The comparison on
-disk is untouched — `kiyas publish out/` picks it up unchanged from somewhere
-else.
+Cloudflare error it is and what it means. Both kinds lapse on their own — an
+address refused with Cloudflare's 1006, whose page says the owner "has banned
+your IP address", was serving requests again the same day — so the answer is to
+leave it a while rather than to keep trying. Nothing is lost either way: the
+comparison on disk is untouched, and `kiyas publish out/` picks it up unchanged
+later or from somewhere else.
 
 ## Roadmap
 
