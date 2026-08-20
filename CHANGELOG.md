@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.2
+
+Reads the Cloudflare error number correctly, which 0.1.1 did not.
+
+0.1.1 added a plain-English message for a blocked address, and told the two
+kinds of block apart by the number on the page — a rate limit lapses, a ban
+does not, and the advice has to differ. Publishing from a blocked address to
+check it showed the number was never being found: the heading that reads
+`Error 1006` on screen is two separate elements in the source, so a pattern
+written against the rendered text matches nothing. Every block came out with
+the generic wording, and a permanent ban was told to wait for the block to
+lapse.
+
+The number is now read where it survives as a single token — the page's own
+feedback script and its link to Cloudflare's documentation — and the test
+fixture is markup copied from a real refusal rather than prose, because prose
+is what got this wrong.
+
 ## 0.1.1
 
 Publishing fixes, all of them found by publishing. The 0.1.0 build predates

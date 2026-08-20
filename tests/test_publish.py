@@ -439,31 +439,67 @@ def test_an_html_error_page_is_truncated(tmp_path):
 # Cloudflare
 # --------------------------------------------------------------------------
 
-#: The genuine article, trimmed. Captured from slow.pics on 2026-08-20 while
-#: the publishing address was banned. Two details here are why this is a copy
-#: of a real page rather than something plausible written by hand: the number
-#: is spelled "Error 1006" and not "error code: 1006" as Cloudflare's own
-#: documentation writes it, and the page states the visitor's IP address in
-#: the body. A hand-written fixture would have had neither, and the code was
-#: wrong about the first one until this was captured.
+#: Markup copied from a real refusal: slow.pics on 2026-08-20, from an address
+#: it had banned. Every awkward thing here is in the original and is the reason
+#: this is a copy rather than something plausible written by hand.
+#:
+#: The number never appears next to the word "Error" in the source. It reads
+#: that way on screen, but the heading is two elements with a newline between
+#: them, so a pattern written against the rendered text finds nothing. The
+#: first version of this fixture *was* written against the rendered text; it
+#: passed, and the code it was guarding matched nothing on the live page.
+#: Where the number does survive as one token is `errorCode: 1006` in the
+#: feedback script and `error-1006/` in the documentation link, and those are
+#: what the code reads.
+#:
+#: The visitor's own address is stated twice in the body. The real one is
+#: replaced here with a documentation address (RFC 5737) -- a test fixture is
+#: no place for somebody's IP -- but its presence is the point: it is what the
+#: error must not repeat back.
 CLOUDFLARE_1006 = """<!doctype html>
 <!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> <![endif]-->
 <html class="no-js" lang="en-US">
 <head><title>Access denied | slow.pics used Cloudflare to restrict access</title></head>
 <body>
-<h1>Error 1006 Ray ID: a2e1408ace72d0f8 &bull; 2026-08-20 12:02:58 UTC</h1>
-<h2>Access denied</h2>
+<script>
+    var a = {event:"feedback clicked",properties:{errorCode: 1006 },version: 1 };
+    b.open("POST","https://sparrow.cloudflare.com/api/v1/event");
+</script>
+<h1 class="inline-block md:block mr-2 font-light text-60 leading-tight">
+    <span data-translate="error">Error</span>
+    <span>1006</span>
+</h1>
+<span class="inline-block md:block heading">Access denied</span>
+<h2>What happened?</h2>
 <p>The owner of this website (slow.pics) has banned your IP address
-(203.0.113.7).</p>
+(203.0.113.7). Please see
+<a href="https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1006/"
+   target="_blank">https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1006/</a>
+for more details.</p>
+<p>Please enable cookies.</p>
 <p>Cloudflare Ray ID: a2e1408ace72d0f8 &bull; Your IP: 203.0.113.7 &bull;
 Performance &amp; security by Cloudflare</p>
 </body></html>"""
 
-CLOUDFLARE_1015 = CLOUDFLARE_1006.replace("Error 1006", "Error 1015").replace(
+CLOUDFLARE_1015 = CLOUDFLARE_1006.replace("1006", "1015").replace(
     "has banned your IP address", "is rate limiting your IP address"
 )
 
 CF_HEADERS = {"cf-ray": "a2e1408ace72d0f8-SOF", "server": "cloudflare"}
+
+
+def test_the_error_number_is_found_in_markup_not_in_prose():
+    """Reading the number is the step that decides which advice is given.
+
+    The heading a person reads as "Error 1006" is two elements with a newline
+    between them. A pattern that expects them adjacent matches nothing, falls
+    back to the generic 403 wording, and tells someone with a permanent ban to
+    wait for it to lapse -- which is exactly what shipped before this fixture
+    was taken from a real page.
+    """
+    assert "Error 1006" not in CLOUDFLARE_1006
+    assert slowpics._CF_CODE.search(CLOUDFLARE_1006).group(1) == "1006"
+    assert slowpics._CF_CODE.search(CLOUDFLARE_1015).group(1) == "1015"
 
 
 def test_a_cloudflare_block_is_explained_rather_than_quoted(tmp_path):

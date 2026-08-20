@@ -216,10 +216,19 @@ def _server_said(response) -> str:
 #: that.
 _CF_RAY = re.compile(r"[0-9a-f]{16}-[A-Z]{3}")
 
-#: Cloudflare's own numbering. The live page writes it "Error 1006", not the
-#: "error code: 1006" the documentation uses, so both spellings are accepted --
-#: this was checked against a real refusal rather than assumed.
-_CF_CODE = re.compile(r"error(?:\s+code)?:?\s*(1\d{3})\b", re.IGNORECASE)
+#: Cloudflare's own numbering, as it appears in the page *source* rather than
+#: as it reads on screen. The heading says "Error 1006" to a person but is
+#: markup to a regex -- ``<span data-translate="error">Error</span>`` and
+#: ``<span>1006</span>`` are separate elements with a newline between them --
+#: so a pattern written against the rendered text matches nothing at all. What
+#: does survive is the number's machine-readable company: ``errorCode: 1006``
+#: in the feedback script, and ``.../cloudflare-1xxx-errors/error-1006/`` in
+#: the link to the documentation. Both are a single token.
+#:
+#: This was written against the rendered text the first time, shipped passing
+#: its own tests, and matched nothing on the real page. It is why the fixture
+#: in the tests is raw markup copied from a refusal and not prose.
+_CF_CODE = re.compile(r"""error[\s_-]*(?:code)?["']?\s*[:=-]?\s*(1\d{3})\b""", re.IGNORECASE)
 
 #: What Cloudflare's numbers mean, for the ones a publisher can actually hit.
 #: These say different things: 1015 lapses on its own, 1006 does not.
