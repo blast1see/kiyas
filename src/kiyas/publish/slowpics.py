@@ -21,7 +21,9 @@ and stops the upload rather than leaving a half-populated comparison.
 from __future__ import annotations
 
 import hashlib
+import random
 import re
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -39,6 +41,23 @@ MAX_PARALLEL_UPLOADS = 6
 
 #: Attempts per image before giving up, covering rate limits and flaky links.
 MAX_ATTEMPTS = 5
+
+#: Minimum seconds between the start of one upload request and the next, across
+#: all workers.
+#:
+#: Six workers with nothing holding them back open six connections in the same
+#: instant, and do it again every time one finishes. Measured on a real run --
+#: 24 screenshots of about 6 MB -- that burst plus the retries it caused was
+#: enough for slow.pics to ban the address outright (Cloudflare 1006), which no
+#: amount of retrying recovers from. Spacing the starts costs about ten seconds
+#: on a 24-image comparison, against uploads that take half a minute each.
+#:
+#: Set to zero to disable, which is what the tests do.
+MIN_UPLOAD_INTERVAL = 0.4
+
+#: Ceiling for the retry backoff. Without one, exponential growth puts the last
+#: attempt minutes away and the run looks hung.
+MAX_BACKOFF = 30.0
 
 
 def _upload_timeout(size_bytes: int) -> float:
@@ -324,14 +343,59 @@ def upload(
     return UploadResult(key=key, url=url, uploaded=len(pending), skipped=skipped)
 
 
+class _Pacer:
+    """Keeps request starts a minimum interval apart, across every worker.
+
+    The thread pool limits how many uploads run at once; this limits how fast
+    they are allowed to *begin*. Those are different things, and only the
+    second one is visible to the server as a burst.
+
+    The sleep happens outside the lock on purpose. Holding it while waiting
+    would make the workers queue up behind each other and turn the pool back
+    into a single stream.
+    """
+
+    __slots__ = ("_interval", "_lock", "_next")
+
+    def __init__(self, interval: float) -> None:
+        self._interval = interval
+        self._lock = threading.Lock()
+        self._next = 0.0
+
+    def wait(self) -> None:
+        if self._interval <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            delay = max(0.0, self._next - now)
+            self._next = max(now, self._next) + self._interval
+        if delay:
+            time.sleep(delay)
+
+
+def _backoff(attempt: int) -> float:
+    """Seconds to wait before retry ``attempt``, growing and jittered.
+
+    Jitter matters more than the growth here. Six workers that hit the same
+    rate limit at the same moment will, with a fixed delay, wake up together
+    and reproduce the burst that caused it. The random half spreads them out.
+    """
+    ceiling = min(MAX_BACKOFF, 2.0 * 2**attempt)
+    return ceiling * (0.5 + random.random() / 2)
+
+
 def _send_images(client, collection_uuid, browser_id, pending, progress) -> None:
     done = 0
     total = len(pending)
     errors: list[str] = []
 
+    pacer = _Pacer(MIN_UPLOAD_INTERVAL)
+
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL_UPLOADS) as pool:
         futures = {
-            pool.submit(_send_one, client, collection_uuid, browser_id, image_uuid, path): path
+            pool.submit(
+                _send_one, client, collection_uuid, browser_id, image_uuid, path, pacer
+            ): path
             for image_uuid, path in pending
         }
         for future in as_completed(futures):
@@ -350,7 +414,14 @@ def _send_images(client, collection_uuid, browser_id, pending, progress) -> None
         raise UploadError(f"{len(errors)} image(s) failed to upload:\n  {shown}{more}")
 
 
-def _send_one(client, collection_uuid: str, browser_id: str, image_uuid: str, path: Path) -> None:
+def _send_one(
+    client,
+    collection_uuid: str,
+    browser_id: str,
+    image_uuid: str,
+    path: Path,
+    pacer: _Pacer | None = None,
+) -> None:
     fields = {
         "collectionUuid": collection_uuid,
         "imageUuid": image_uuid,
@@ -361,6 +432,12 @@ def _send_one(client, collection_uuid: str, browser_id: str, image_uuid: str, pa
     timeout = _upload_timeout(len(body))
 
     for attempt in range(MAX_ATTEMPTS):
+        # Before every attempt, not just the first: a retry is another request
+        # arriving at the same server, and retries are what turn a slow link
+        # into a burst.
+        if pacer is not None:
+            pacer.wait()
+
         try:
             response = client.post(
                 f"{BASE_URL}/upload/image/{image_uuid}",
@@ -371,7 +448,7 @@ def _send_one(client, collection_uuid: str, browser_id: str, image_uuid: str, pa
         except Exception as exc:  # noqa: BLE001 - retry transport failures
             if attempt == MAX_ATTEMPTS - 1:
                 raise UploadError(str(exc)) from exc
-            time.sleep((attempt + 1) * 2)
+            time.sleep(_backoff(attempt))
             continue
 
         if response.status_code == 400:
@@ -389,7 +466,7 @@ def _send_one(client, collection_uuid: str, browser_id: str, image_uuid: str, pa
         if response.status_code >= 400:
             if attempt == MAX_ATTEMPTS - 1:
                 raise UploadError(f"HTTP {response.status_code}")
-            time.sleep((attempt + 1) * 2)
+            time.sleep(_backoff(attempt))
             continue
 
         return
@@ -402,4 +479,4 @@ def _retry_after(header: str | None, attempt: int) -> float:
     try:
         return max(1.0, float(header))
     except (TypeError, ValueError):
-        return (attempt + 1) * 2.0
+        return _backoff(attempt)

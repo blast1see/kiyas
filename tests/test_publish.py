@@ -10,6 +10,8 @@ without a human looking at the result.
 from __future__ import annotations
 
 import json
+import threading
+import time
 from fractions import Fraction
 
 import pytest
@@ -18,6 +20,12 @@ from kiyas.publish import bbcode, load_manifest, slowpics
 from kiyas.publish.bbcode import BBCodeError
 from kiyas.publish.manifest import Comparison, ComparisonRow, ManifestError
 from kiyas.publish.slowpics import UploadError
+
+#: The pacing interval as shipped, read at import time -- before the autouse
+#: fixture below sets it to zero. Without this the "is pacing on by default"
+#: test would be reading the fixture's value and would pass no matter what the
+#: module ships.
+SHIPPED_MIN_UPLOAD_INTERVAL = slowpics.MIN_UPLOAD_INTERVAL
 
 # --------------------------------------------------------------------------
 # Manifest
@@ -137,6 +145,17 @@ def test_a_manifest_with_labels_uses_them_instead_of_timestamps(tmp_path):
 
 def _comparison(tmp_path, **kwargs) -> Comparison:
     return load_manifest(_make_output(tmp_path, **kwargs))
+
+
+@pytest.fixture(autouse=True)
+def _no_pacing(monkeypatch):
+    """Upload pacing is real time, and the suite should not spend it.
+
+    The pacing itself is tested directly further down; here it only needs to
+    be out of the way.
+    """
+    monkeypatch.setattr(slowpics, "MIN_UPLOAD_INTERVAL", 0.0)
+    monkeypatch.setattr(slowpics.time, "sleep", lambda _seconds: None)
 
 
 def test_payload_defaults_to_unlisted(tmp_path):
@@ -459,14 +478,140 @@ def test_the_upload_timeout_grows_with_the_image():
 
 
 def test_retry_after_header_is_honoured():
+    """A number from the server is obeyed exactly; anything else backs off."""
     assert slowpics._retry_after("7", 0) == 7.0
-    assert slowpics._retry_after(None, 0) == 2.0
-    assert slowpics._retry_after("nonsense", 2) == 6.0
+
+    # No usable header falls through to the jittered backoff, so the contract
+    # is a range rather than a number.
+    assert 1.0 <= slowpics._retry_after(None, 0) <= 2.0
+    assert 4.0 <= slowpics._retry_after("nonsense", 2) <= 8.0
 
 
 def test_retry_after_never_returns_zero():
     """A zero would turn a rate limit into a tight loop against a free service."""
     assert slowpics._retry_after("0", 0) >= 1.0
+
+
+# --------------------------------------------------------------------------
+# Upload pacing
+# --------------------------------------------------------------------------
+
+
+def test_pacer_spaces_starts_apart(monkeypatch):
+    """Each start is pushed one interval past the previous one.
+
+    Asserted on the delay the pacer asks for rather than on elapsed wall time:
+    a clock-watching test is slow when it passes and flaky on a loaded CI box.
+    """
+    asked: list[float] = []
+    monkeypatch.setattr(slowpics.time, "sleep", lambda seconds: asked.append(seconds))
+
+    pacer = slowpics._Pacer(5.0)
+    for _ in range(4):
+        pacer.wait()
+
+    # The first caller owns the slot it finds free, so it does not wait; each
+    # one after it waits for the slot the previous caller took.
+    assert len(asked) == 3
+    assert asked == pytest.approx([5.0, 10.0, 15.0], abs=0.5)
+
+
+def test_pacer_gate_is_global_not_per_thread(monkeypatch):
+    """Six workers arriving at once get six different slots.
+
+    A per-thread delay would let all six through together, which is exactly
+    the burst the interval exists to prevent.
+    """
+    asked: list[float] = []
+    lock = threading.Lock()
+
+    def record(seconds):
+        with lock:
+            asked.append(seconds)
+
+    monkeypatch.setattr(slowpics.time, "sleep", record)
+
+    pacer = slowpics._Pacer(5.0)
+    threads = [threading.Thread(target=pacer.wait) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    # One worker goes straight through, the other five are staggered onto
+    # slots of their own rather than all being handed the same delay.
+    assert len(asked) == 5
+    assert len(set(asked)) == 5, f"workers were not staggered: {sorted(asked)}"
+
+
+def test_pacer_of_zero_does_not_sleep(monkeypatch):
+    """Disabling the pacing has to actually disable it, not sleep zero."""
+    slept: list[float] = []
+    monkeypatch.setattr(slowpics.time, "sleep", lambda seconds: slept.append(seconds))
+
+    pacer = slowpics._Pacer(0.0)
+    for _ in range(5):
+        pacer.wait()
+
+    assert slept == []
+
+
+def test_every_attempt_is_paced_not_just_the_first(tmp_path):
+    """Retries go through the pacer too.
+
+    This is the case that mattered: the first pass was paced, the retries were
+    not, and the retries were what arrived as a burst.
+    """
+    waits = 0
+
+    class CountingPacer:
+        def wait(self):
+            nonlocal waits
+            waits += 1
+
+    attempts = 0
+
+    class FlakyClient:
+        def post(self, *_args, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise OSError("the write operation timed out")
+            return _Response(200)
+
+    image = tmp_path / "frame.png"
+    image.write_bytes(b"x")
+
+    slowpics._send_one(FlakyClient(), "col", "browser", "img", image, CountingPacer())
+
+    assert attempts == 3
+    assert waits == 3, "the two retries were not paced"
+
+
+def test_pacing_is_on_by_default():
+    """The shipped interval has to be a real one.
+
+    Every other test in this section runs with pacing switched off, so nothing
+    else here would notice the default being set to zero -- and a zero is
+    invisible: uploads still succeed, right up until the address is banned.
+    """
+    assert SHIPPED_MIN_UPLOAD_INTERVAL > 0
+
+
+def test_backoff_grows_and_stays_bounded():
+    """Growing, jittered, and never past the ceiling."""
+    for attempt in range(10):
+        wait = slowpics._backoff(attempt)
+        assert 0 < wait <= slowpics.MAX_BACKOFF
+
+    early = [slowpics._backoff(0) for _ in range(20)]
+    late = [slowpics._backoff(4) for _ in range(20)]
+    assert max(early) < min(late), "a later attempt should wait longer"
+
+
+def test_backoff_is_jittered():
+    """Identical waits would make six workers retry in lockstep."""
+    assert len({slowpics._backoff(3) for _ in range(20)}) > 1
 
 
 # --------------------------------------------------------------------------
