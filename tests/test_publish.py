@@ -401,6 +401,22 @@ def test_missing_xsrf_token_is_explained(tmp_path):
         slowpics.upload(_comparison(tmp_path), session=session)
 
 
+def test_the_upload_timeout_grows_with_the_image():
+    """One constant covered both a small API call and a 6 MB body.
+
+    Thirty seconds is generous for the first and hopeless for the second: on a
+    real comparison of 24 screenshots at about 6 MB each, nine were lost to
+    "the write operation timed out". Six uploads share one uplink, so each gets
+    roughly a sixth of it, and the timeout has to allow for that.
+    """
+    small = slowpics._upload_timeout(40_000)
+    big = slowpics._upload_timeout(6_000_000)
+
+    assert big > small
+    assert big >= 180, "a 6 MB image needs more than the old 30 seconds"
+    assert small >= 90, "a floor, so a tiny image is not on a hair trigger"
+
+
 def test_retry_after_header_is_honoured():
     assert slowpics._retry_after("7", 0) == 7.0
     assert slowpics._retry_after(None, 0) == 2.0

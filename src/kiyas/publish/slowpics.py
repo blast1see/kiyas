@@ -39,6 +39,24 @@ MAX_PARALLEL_UPLOADS = 6
 #: Attempts per image before giving up, covering rate limits and flaky links.
 MAX_ATTEMPTS = 5
 
+
+def _upload_timeout(size_bytes: int) -> float:
+    """Seconds to allow for one image, sized to the image.
+
+    One constant used to cover both the small API calls and the image bodies,
+    and thirty seconds is generous for the first and hopeless for the second.
+    Measured on a real comparison: 24 screenshots of about 6 MB each, nine of
+    them lost to "the write operation timed out".
+
+    The arithmetic that matters is the parallelism. Six uploads share one
+    uplink, so each gets roughly a sixth of it, and a 6 MB image at a sixth of
+    a modest home connection is already at thirty seconds before anything goes
+    wrong. This allows about 34 kB/s per stream -- slow, but a slow link should
+    finish rather than fail, because failing costs the whole run.
+    """
+    return max(90.0, 30.0 * size_bytes / 1_000_000)
+
+
 _TIMEOUT = 30.0
 
 
@@ -306,13 +324,16 @@ def _send_one(client, collection_uuid: str, browser_id: str, image_uuid: str, pa
         "browserId": browser_id,
     }
 
+    body = path.read_bytes()
+    timeout = _upload_timeout(len(body))
+
     for attempt in range(MAX_ATTEMPTS):
         try:
             response = client.post(
                 f"{BASE_URL}/upload/image/{image_uuid}",
                 data=fields,
-                files={"file": (path.name, path.read_bytes(), "image/png")},
-                timeout=_TIMEOUT,
+                files={"file": (path.name, body, "image/png")},
+                timeout=timeout,
             )
         except Exception as exc:  # noqa: BLE001 - retry transport failures
             if attempt == MAX_ATTEMPTS - 1:
