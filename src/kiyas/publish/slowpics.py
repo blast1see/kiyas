@@ -21,6 +21,7 @@ and stops the upload rather than leaving a half-populated comparison.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -75,6 +76,38 @@ class UploadResult:
 #: How much of a failed response to quote back. Enough for a JSON field error,
 #: short of an HTML error page.
 _ERROR_BODY_LIMIT = 600
+
+
+#: What slow.pics accepts as a TMDB reference. The reference client documents it
+#: as "TV_XXXXXX" or "MOVIE_XXXXXX"; a bare number is refused, and refused with
+#: a bare 400 carrying no body and no explanation, which loses the whole upload.
+_TMDB_PATTERN = re.compile(r"^(movie|tv)[_/:\s-]*(\d+)$", re.IGNORECASE)
+
+
+def normalise_tmdb(value: str) -> str:
+    """Turn a TMDB reference into the form slow.pics wants, or refuse it.
+
+    Accepts the shapes people actually have to hand -- ``MOVIE_1275779``,
+    ``movie/1275779`` (which is how Matroska tags carry it), ``tv 1399`` -- and
+    returns the canonical ``MOVIE_1275779``.
+
+    A bare number is refused rather than assumed. The type is not decoration:
+    guessing wrong attaches the comparison to a different title, and the person
+    who passed the id is the one who knows which it is.
+    """
+    text = str(value).strip()
+    match = _TMDB_PATTERN.match(text)
+    if match:
+        return f"{match.group(1).upper()}_{match.group(2)}"
+    if text.isdigit():
+        raise ValueError(
+            f"--tmdb {text} does not say whether that is a film or a series. "
+            f"slow.pics wants MOVIE_{text} or TV_{text}."
+        )
+    raise ValueError(
+        f"--tmdb {text!r} is not a TMDB reference. Expected MOVIE_1275779, "
+        f"TV_1399, or the movie/1275779 form Matroska tags use."
+    )
 
 
 def _headers() -> dict[str, str]:
@@ -133,7 +166,7 @@ def build_payload(
             payload[f"images[{index}].name"] = f"{row.label} - {source.name}"
 
     if tmdb_id:
-        payload["tmdbId"] = tmdb_id
+        payload["tmdbId"] = normalise_tmdb(tmdb_id)
     return payload
 
 

@@ -401,6 +401,47 @@ def test_missing_xsrf_token_is_explained(tmp_path):
         slowpics.upload(_comparison(tmp_path), session=session)
 
 
+def test_tmdb_references_are_normalised_to_what_slow_pics_wants():
+    """The reference client documents "TV_XXXXXX" or "MOVIE_XXXXXX".
+
+    A bare number was being sent and refused with a bare 400 -- no body, no
+    header, nothing to act on -- which cost a whole upload to discover.
+    """
+    assert slowpics.normalise_tmdb("MOVIE_1275779") == "MOVIE_1275779"
+    assert slowpics.normalise_tmdb("TV_1399") == "TV_1399"
+    # The shape Matroska tags carry, which is where the id usually comes from.
+    assert slowpics.normalise_tmdb("movie/1275779") == "MOVIE_1275779"
+    assert slowpics.normalise_tmdb("tv/1399") == "TV_1399"
+    assert slowpics.normalise_tmdb("  movie 1275779  ") == "MOVIE_1275779"
+
+
+def test_a_bare_number_is_refused_rather_than_guessed():
+    """Guessing the type attaches the comparison to a different title.
+
+    The person who passed the id knows which it is; this program does not, and
+    a film and a series can share a number.
+    """
+    with pytest.raises(ValueError, match="MOVIE_1275779 or TV_1275779"):
+        slowpics.normalise_tmdb("1275779")
+
+
+def test_an_imdb_id_is_not_a_tmdb_id():
+    with pytest.raises(ValueError, match="not a TMDB reference"):
+        slowpics.normalise_tmdb("tt15047880")
+
+
+def test_the_payload_carries_the_normalised_form(tmp_path):
+    payload = slowpics.build_payload(
+        _comparison(tmp_path),
+        public=False,
+        nsfw=False,
+        optimize=True,
+        remove_after_days=0,
+        tmdb_id="movie/1275779",
+    )
+    assert payload["tmdbId"] == "MOVIE_1275779"
+
+
 def test_the_upload_timeout_grows_with_the_image():
     """One constant covered both a small API call and a 6 MB body.
 

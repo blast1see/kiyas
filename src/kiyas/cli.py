@@ -125,7 +125,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DAYS",
         help="Have slow.pics delete the collection after this many days.",
     )
-    publish.add_argument("--tmdb", default=None, metavar="ID", help="Attach a TMDB id.")
+    publish.add_argument(
+        "--tmdb",
+        default=None,
+        metavar="ID",
+        help="Attach a TMDB id, as MOVIE_1275779 or TV_1399. A bare number is "
+        "refused: slow.pics needs to know which of the two it is.",
+    )
     publish.add_argument(
         "--format",
         dest="formats",
@@ -277,6 +283,16 @@ def _cmd_publish(args, *, directory: Path | None = None) -> int:
         f"{comparison.total_images} images, "
         f"{len(comparison.rows)} rows x {len(comparison.sources)} sources"
     )
+
+    # Checked before anything is sent. A malformed id comes back from the server
+    # as a bare 400 with no body, after the whole comparison has been hashed and
+    # offered -- a slow way to learn about a typo.
+    if args.tmdb:
+        try:
+            slowpics.normalise_tmdb(args.tmdb)
+        except ValueError as exc:
+            console.print(f"[red]{escape(str(exc))}[/red]")
+            return 1
 
     status = console.status("preparing")
     status.start()
