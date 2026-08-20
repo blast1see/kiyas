@@ -163,13 +163,18 @@ python -m pytest -m mpv                   # needs mpv and a display
 QT_QPA_PLATFORM=offscreen python -m pytest -m gui   # needs PySide6, not a display
 ```
 
-Markers: `integration`, `vapoursynth`, `mpv`, `gui`, `live`. `live` talks to
-slow.pics for real and never runs unattended.
+Markers: `integration`, `vapoursynth`, `mpv`, `gui`, `live`. `live` is reserved
+for tests that talk to slow.pics for real, and no test carries it yet —
+publishing is checked by hand, against the live site, because the interesting
+answers there are the ones the site gives and not the ones a fake session was
+told to give. Both Cloudflare fixes in 0.1.1 came out of doing that; neither
+was visible from the suite.
 
 **Unit tests are necessary and not sufficient.** The version-probe bug below
 passed every unit test. Frame accuracy, tonemapping and sync have to be checked
-against real material; feature-length remuxes are at
-`a directory outside this repository`.
+against real material: feature-length remuxes, kept outside this repository
+because they are tens of gigabytes each. Any varied set will do; what the set
+has to be is varied, for the reason below.
 
 **Nine real files, deliberately unalike, are the sweep that finds this class
 of bug.** A Dolby Vision profile 7 remux, a profile 8 hybrid, a 4K WEB-DL with

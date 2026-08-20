@@ -210,6 +210,90 @@ def _server_said(response) -> str:
     return "\nthe server said: " + body
 
 
+#: Cloudflare's ray id, which is the handle support asks for. Taken from the
+#: header rather than the body: the body prints it beside the visitor's own IP
+#: address, and an error message people paste into bug reports should not carry
+#: that.
+_CF_RAY = re.compile(r"[0-9a-f]{16}-[A-Z]{3}")
+
+#: Cloudflare's own numbering. The live page writes it "Error 1006", not the
+#: "error code: 1006" the documentation uses, so both spellings are accepted --
+#: this was checked against a real refusal rather than assumed.
+_CF_CODE = re.compile(r"error(?:\s+code)?:?\s*(1\d{3})\b", re.IGNORECASE)
+
+#: What Cloudflare's numbers mean, for the ones a publisher can actually hit.
+#: These say different things: 1015 lapses on its own, 1006 does not.
+_CF_MEANINGS = {
+    "1006": "slow.pics has banned this IP address",
+    "1007": "slow.pics has banned this IP address",
+    "1008": "slow.pics has banned this IP address",
+    "1015": "this IP address is being rate limited",
+    "1020": "an access rule on slow.pics refused the request",
+}
+
+#: Fallback when the page carries no number: what each status means when it is
+#: the edge answering rather than the site.
+_EDGE_REASONS = {
+    403: "this IP address is blocked or rate limited",
+    429: "too many requests from this IP address",
+    503: "the edge is asking for a browser challenge kiyas cannot answer",
+}
+
+
+def _edge_block(response) -> str:
+    """One sentence for a Cloudflare refusal, or "" if this is not one.
+
+    slow.pics sits behind Cloudflare, and when Cloudflare refuses, the body is
+    an HTML interstitial about browsers and JavaScript rather than anything the
+    API would ever send. Quoting it verbatim -- which is what happens if this
+    is left to ``_server_said`` -- hands someone six hundred characters of
+    markup describing a problem they do not have.
+
+    The thing they need to know is that the site never saw the request, that
+    the refusal is keyed to their address rather than to anything in the
+    comparison, and that sending it again is not the answer. Measured: a run
+    that uploads cleanly can be refused minutes later from the same address.
+    """
+    if response is None:
+        return ""
+    status = getattr(response, "status_code", 0) or 0
+    if status < 400:
+        return ""
+    body = getattr(response, "text", "") or ""
+    head = body[:4000].lower()
+    if "<html" not in head or "cloudflare" not in head:
+        return ""
+
+    code = _CF_CODE.search(body)
+    number = code.group(1) if code else ""
+    reason = _CF_MEANINGS.get(number) or _EDGE_REASONS.get(status) or f"HTTP {status}"
+
+    marks = [f"error {number}"] if number else []
+    ray = _CF_RAY.search(str((getattr(response, "headers", None) or {}).get("cf-ray", "")))
+    if ray:
+        marks.append(f"ray {ray.group(0)}")
+    detail = f" ({', '.join(marks)})" if marks else ""
+
+    # A ban has to be told apart from a rate limit. Waiting clears one and not
+    # the other, and someone who retries all evening against a 1006 is waiting
+    # for something that is not going to happen.
+    remedy = (
+        "Publishing from a different network is the only way through it."
+        if number in {"1006", "1007", "1008"}
+        else "Wait for it to lapse, or publish from a different network."
+    )
+    return (
+        f"\nThis is Cloudflare, not slow.pics: {reason}{detail}. "
+        f"The site never saw the request, so nothing in the comparison caused it "
+        f"and sending it again will not help. {remedy}"
+    )
+
+
+def _explain(response) -> str:
+    """Why a request was refused: the edge's reason if it was the edge, else the body."""
+    return _edge_block(response) or _server_said(response)
+
+
 def build_hashes(comparison: Comparison) -> dict[str, str]:
     """Digest every image, keyed the way the server expects.
 
@@ -286,11 +370,12 @@ def upload(
     if progress:
         progress("connecting to slow.pics")
 
+    landing = None
     try:
         landing = client.get(f"{BASE_URL}/comparison", timeout=_TIMEOUT)
         landing.raise_for_status()
     except Exception as exc:  # noqa: BLE001 - any transport failure is the same story
-        raise UploadError(f"could not reach slow.pics: {exc}") from exc
+        raise UploadError(f"could not reach slow.pics: {exc}{_explain(landing)}") from exc
 
     token = client.cookies.get("XSRF-TOKEN")
     if not token:
@@ -324,9 +409,7 @@ def upload(
         created.raise_for_status()
         response = created.json()
     except Exception as exc:  # noqa: BLE001
-        raise UploadError(
-            f"slow.pics refused the collection: {exc}{_server_said(created)}"
-        ) from exc
+        raise UploadError(f"slow.pics refused the collection: {exc}{_explain(created)}") from exc
 
     key = response.get("key")
     collection_uuid = response.get("collectionUuid")
@@ -462,6 +545,14 @@ def _send_one(
             wait = _retry_after(response.headers.get("Retry-After"), attempt)
             time.sleep(wait)
             continue
+
+        if response.status_code == 403:
+            # Not retried, and this is the important one. A 403 is the edge
+            # refusing the address, not the server being busy; five more
+            # attempts per image cannot succeed and are themselves the traffic
+            # that turns a rate limit into a ban. Six workers each retrying
+            # into a block is how the address got refused in the first place.
+            raise UploadError(f"refused{_explain(response) or ': HTTP 403'}")
 
         if response.status_code >= 400:
             if attempt == MAX_ATTEMPTS - 1:

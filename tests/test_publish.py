@@ -287,7 +287,17 @@ class _Response:
 
 class _FakeSession:
     def __init__(
-        self, *, image_status=200, image_headers=None, collection_status=200, collection_text=""
+        self,
+        *,
+        image_status=200,
+        image_headers=None,
+        image_text="",
+        collection_status=200,
+        collection_text="",
+        collection_headers=None,
+        landing_status=200,
+        landing_text="",
+        landing_headers=None,
     ):
         self.headers = {}
         self.cookies = {"XSRF-TOKEN": "token-123", "BROWSER-ID": "browser-abc"}
@@ -295,20 +305,34 @@ class _FakeSession:
         self.image_posts = []
         self._image_status = image_status
         self._image_headers = image_headers or {}
+        self._image_text = image_text
         self._collection_status = collection_status
         self._collection_text = collection_text
+        self._collection_headers = collection_headers or {}
+        self._landing_status = landing_status
+        self._landing_text = landing_text
+        self._landing_headers = landing_headers or {}
 
     def get(self, url, **_kwargs):
-        return _Response()
+        return _Response(
+            status=self._landing_status,
+            text=self._landing_text,
+            headers=self._landing_headers,
+        )
 
     def post(self, url, data=None, files=None, **_kwargs):
         if "/upload/image/" in url:
             self.image_posts.append((url, data, files))
-            return _Response(self._image_status, headers=self._image_headers)
+            return _Response(
+                self._image_status,
+                headers=self._image_headers,
+                text=self._image_text,
+            )
         self.posts.append((url, data))
         return _Response(
             status=self._collection_status,
             text=self._collection_text,
+            headers=self._collection_headers,
             payload={
                 "key": "ABC123",
                 "collectionUuid": "coll-1",
@@ -409,6 +433,136 @@ def test_an_html_error_page_is_truncated(tmp_path):
         slowpics.upload(_comparison(tmp_path), session=session)
     assert len(str(excinfo.value)) < 1200
     assert str(excinfo.value).endswith("...")
+
+
+# --------------------------------------------------------------------------
+# Cloudflare
+# --------------------------------------------------------------------------
+
+#: The genuine article, trimmed. Captured from slow.pics on 2026-08-20 while
+#: the publishing address was banned. Two details here are why this is a copy
+#: of a real page rather than something plausible written by hand: the number
+#: is spelled "Error 1006" and not "error code: 1006" as Cloudflare's own
+#: documentation writes it, and the page states the visitor's IP address in
+#: the body. A hand-written fixture would have had neither, and the code was
+#: wrong about the first one until this was captured.
+CLOUDFLARE_1006 = """<!doctype html>
+<!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> <![endif]-->
+<html class="no-js" lang="en-US">
+<head><title>Access denied | slow.pics used Cloudflare to restrict access</title></head>
+<body>
+<h1>Error 1006 Ray ID: a2e1408ace72d0f8 &bull; 2026-08-20 12:02:58 UTC</h1>
+<h2>Access denied</h2>
+<p>The owner of this website (slow.pics) has banned your IP address
+(203.0.113.7).</p>
+<p>Cloudflare Ray ID: a2e1408ace72d0f8 &bull; Your IP: 203.0.113.7 &bull;
+Performance &amp; security by Cloudflare</p>
+</body></html>"""
+
+CLOUDFLARE_1015 = CLOUDFLARE_1006.replace("Error 1006", "Error 1015").replace(
+    "has banned your IP address", "is rate limiting your IP address"
+)
+
+CF_HEADERS = {"cf-ray": "a2e1408ace72d0f8-SOF", "server": "cloudflare"}
+
+
+def test_a_cloudflare_block_is_explained_rather_than_quoted(tmp_path):
+    """The likeliest real failure, and the one the raw quote serves worst.
+
+    slow.pics is behind Cloudflare and bans addresses that upload too eagerly.
+    What comes back is a page about enabling cookies, and pasting 600
+    characters of it into the terminal tells the reader nothing they can act
+    on -- least of all that the site never saw their comparison at all.
+    """
+    session = _FakeSession(
+        collection_status=403, collection_text=CLOUDFLARE_1006, collection_headers=CF_HEADERS
+    )
+
+    with pytest.raises(UploadError) as excinfo:
+        slowpics.upload(_comparison(tmp_path), session=session)
+
+    message = str(excinfo.value)
+    assert "banned this IP address" in message
+    assert "error 1006" in message
+    assert "a2e1408ace72d0f8-SOF" in message
+    assert "<html" not in message
+    assert "enable cookies" not in message
+
+
+def test_a_cloudflare_block_does_not_repeat_the_visitors_ip(tmp_path):
+    """The page prints it; an error someone pastes into a bug report should not."""
+    session = _FakeSession(
+        collection_status=403, collection_text=CLOUDFLARE_1006, collection_headers=CF_HEADERS
+    )
+
+    with pytest.raises(UploadError) as excinfo:
+        slowpics.upload(_comparison(tmp_path), session=session)
+
+    assert "203.0.113.7" not in str(excinfo.value)
+
+
+def test_a_ban_and_a_rate_limit_are_not_given_the_same_advice(tmp_path):
+    """Waiting clears one of them and never clears the other."""
+    banned = _FakeSession(
+        collection_status=403, collection_text=CLOUDFLARE_1006, collection_headers=CF_HEADERS
+    )
+    limited = _FakeSession(
+        collection_status=429, collection_text=CLOUDFLARE_1015, collection_headers=CF_HEADERS
+    )
+
+    with pytest.raises(UploadError) as ban:
+        slowpics.upload(_comparison(tmp_path), session=banned)
+    with pytest.raises(UploadError) as limit:
+        slowpics.upload(_comparison(tmp_path), session=limited)
+
+    assert "Wait" not in str(ban.value)
+    assert "different network" in str(ban.value)
+    assert "Wait for it to lapse" in str(limit.value)
+    assert "rate limited" in str(limit.value)
+
+
+def test_a_blocked_address_is_named_at_the_landing_page(tmp_path):
+    """The block usually lands before the collection is ever posted."""
+    session = _FakeSession(
+        landing_status=403, landing_text=CLOUDFLARE_1006, landing_headers=CF_HEADERS
+    )
+
+    with pytest.raises(UploadError) as excinfo:
+        slowpics.upload(_comparison(tmp_path), session=session)
+
+    assert "banned this IP address" in str(excinfo.value)
+    assert "<html" not in str(excinfo.value)
+
+
+def test_a_forbidden_image_is_not_retried(tmp_path):
+    """Retrying into a block is the traffic that turns a limit into a ban.
+
+    Five attempts per image across six workers is another twenty requests
+    arriving at an edge that has already refused this address, and not one of
+    them can succeed. The count is the assertion: four images, four requests.
+    """
+    session = _FakeSession(image_status=403, image_text=CLOUDFLARE_1006, image_headers=CF_HEADERS)
+
+    with pytest.raises(UploadError) as excinfo:
+        slowpics.upload(_comparison(tmp_path), session=session)
+
+    assert len(session.image_posts) == 4
+    assert "banned this IP address" in str(excinfo.value)
+
+
+def test_a_field_error_is_still_quoted_word_for_word(tmp_path):
+    """The Cloudflare path must not swallow the case it was built alongside."""
+    session = _FakeSession(
+        collection_status=400,
+        collection_text='{"tmdbId":"must be MOVIE_<id> or TV_<id>"}',
+        collection_headers=CF_HEADERS,
+    )
+
+    with pytest.raises(UploadError, match="must be MOVIE_") as excinfo:
+        slowpics.upload(_comparison(tmp_path), session=session)
+
+    assert "the server said" in str(excinfo.value)
+    assert "Cloudflare" not in str(excinfo.value)
 
 
 def test_missing_xsrf_token_is_explained(tmp_path):

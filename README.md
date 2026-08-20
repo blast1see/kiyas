@@ -317,6 +317,20 @@ Every image is hashed before upload and the digests go up with the collection
 metadata, so slow.pics can say which ones it already holds. Re-running a
 publish that died halfway only sends what is missing.
 
+**Uploads are paced deliberately.** slow.pics is free, run by one person, and
+sits behind Cloudflare, which bans addresses that arrive in bursts — a 24-image
+comparison was enough to earn one. kiyas holds upload starts a fixed interval
+apart across all six workers, puts retries through the same pacing, and does
+not retry a refusal at all, since further attempts against a block cannot
+succeed and are themselves the traffic that turns a rate limit into a ban. It
+costs about ten seconds on a 24-image comparison.
+
+If your address does get blocked, kiyas says so in one sentence: which
+Cloudflare error it is, and whether waiting will clear it. A rate limit lapses;
+a ban does not, and no amount of retrying will change either. The comparison on
+disk is untouched — `kiyas publish out/` picks it up unchanged from somewhere
+else.
+
 ## Roadmap
 
 | Phase | Scope | State |

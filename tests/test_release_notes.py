@@ -91,3 +91,18 @@ def test_a_bad_tag_fails_the_run_rather_than_writing_notes(tmp_path):
 
     assert release_notes.main(["release_notes.py", "v0.0.0-nope", str(out)]) == 1
     assert not out.exists()
+
+
+def test_the_package_agrees_with_the_packaging():
+    """The version lives in two files and only one of them is checked at tag time.
+
+    `notes()` compares the tag against `pyproject.toml`, which is what builds
+    the wheel. What the binary answers to `--version`, and what identifies
+    kiyas to slow.pics in its User-Agent, is `kiyas.__version__`. Nothing
+    compared the two, so bumping one and forgetting the other produced exactly
+    the failure the release guard was written to prevent -- a v0.1.1 release
+    whose binary calls itself 0.1.0 -- while every check passed.
+    """
+    from kiyas import __version__
+
+    assert __version__ == release_notes.declared_version(ROOT / "pyproject.toml")
