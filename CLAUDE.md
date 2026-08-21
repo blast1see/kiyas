@@ -410,6 +410,18 @@ directory per track, the same images in the same order, a manifest -- so
 
 ## Publishing
 
+There are two backends. `publish/slowpics.py` and `publish/comppics.py` share
+`publish/result.py` (the one `UploadError` and `UploadResult` both hand back),
+`publish/transport.py` (reading a Cloudflare refusal apart from an API error)
+and `publish/manifest.py`. The CLI picks one with `--to` and never branches on
+the host again after `_SENDERS`.
+
+They are not symmetrical, and the differences below are each a place where
+carrying one backend's habits into the other produces a bug that does not look
+like one.
+
+### slow.pics
+
 slow.pics has no public API documentation. The request shapes in
 `publish/slowpics.py` were read off a working client (`vsview-comp`) and then
 checked against the live service; do not change them from first principles.
@@ -439,7 +451,62 @@ checked against the live service; do not change them from first principles.
   them to say so.
 
 - **Never test publishing with the user's media.** `tests/` and any live check
-  use ffmpeg-generated synthetic images, unlisted, with an expiry.
+  use ffmpeg-generated synthetic images, unlisted, with an expiry. This holds
+  for both backends.
+
+### comp.pics
+
+comp.pics is the hosted instance of `thezak48/comps`, which is open source and
+publishes an OpenAPI 3.1 document at `/openapi.json` with Swagger UI at
+`/api/docs`. The shapes in `publish/comppics.py` were read off that spec and
+the server's own source, so unlike slow.pics they can be checked rather than
+guessed. Read the spec before changing them.
+
+- **There is no transpose here.** The server takes `row` and `column` as
+  separate form fields, so `row` is the frame and `column` is the source and
+  the mapping from what kiyas holds is direct. Transposing out of habit,
+  because the other backend needs it, would put every picture in the wrong cell
+  without erroring — the same failure as above, arrived at from the opposite
+  direction. `test_row_is_the_frame_and_column_is_the_source` is the guard.
+
+- **`custom_name` is the column heading.** The site builds its headings from
+  the first row's image names, so every cell carries its *source's* name. A
+  frame label there would print "0:00:04.170 / 100" above the column and lose
+  which release is which.
+
+- **`image_urls` is source-major** — `urls[source * rows + row]` — because that
+  is what `bbcode` indexes. Any other order pairs the wrong picture with the
+  wrong source in the markup, silently. This is the one backend that fills the
+  field in, and the reason `bbcode.render` is reachable at all.
+
+- **The expiry is an enum**, not an integer: 1, 7, 30 or 90 days. Anything else
+  is a 422 *after* the comparison has been created, leaving an empty one
+  behind, so `snap_expiration` rounds before the first request. There is no
+  "never".
+
+- **The public instance does not apply the expiry the JSON API is given.**
+  Measured 2026-08-21: two creates carrying `expiration_days: 1` were stored,
+  and still read back, as 7. The field is in the spec and the current source
+  honours it, so the request is right and that deployment is behind. The client
+  keeps sending it and compares the echoed value, reporting the difference
+  through `UploadResult.notes` — asking for one day and silently getting seven
+  is the kind of thing nobody goes and checks.
+
+- **There is no unlisted mode.** The API listed every comparison on the public
+  instance to anyone who asked when this was written. That makes publishing
+  there a more public act than the same command against slow.pics, so the CLI
+  says so before it sends anything rather than after.
+
+- **The public instance runs behind its own `develop` branch.** It has neither
+  the `edit_token` that newer builds issue at creation nor the authorisation
+  check that consumes it, so anonymous uploads work today. The client stores
+  the token when the server offers one and sends it as `X-Edit-Token`
+  regardless: harmless against the current instance, and required the day that
+  branch ships. Do not make it conditional on a version.
+
+- **`MAX_ROWS` is checked here, not left to the server.** The server clamps
+  with `min(total_rows, 200)` instead of refusing, so without the check a long
+  comparison uploads for minutes and comes out quietly short.
 
 ## Packaging
 
@@ -488,3 +555,10 @@ are credited in the README and both deserve to stay credited.
 kiyas is not tied to any tracker, site or community. Output formats are named
 after the markup they produce, never after a place that accepts it, and no
 site-specific branding, URL or terminology belongs anywhere in this repository.
+
+A publishing *destination* is the one thing that has to be named, because a
+request has to go somewhere. That is a backend, not a brand: it may name the
+host in its own module, its own flag value and its own errors, and nowhere
+else. It buys no vocabulary anywhere in the tool — `FORMATS` stays
+`comparison`, `img`, `markdown`, and a second destination is a reason to make
+the shared code more neutral rather than less.

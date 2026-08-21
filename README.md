@@ -2,12 +2,13 @@
 
 A comparison workbench for video and audio releases: generate frame-matched
 screenshots from several sources, analyse audio, and publish the result to
-[slow.pics](https://slow.pics) with forum-ready BBCode.
+[slow.pics](https://slow.pics) or [comp.pics](https://comp.pics) with
+forum-ready BBCode.
 
 *kıyas* is Turkish for "comparison".
 
 > **Status: usable.** Point it at two or more files and it writes frame-matched,
-> tonemapped screenshots and publishes them to slow.pics. Point it at one file
+> tonemapped screenshots and publishes them. Point it at one file
 > and a list of player settings and it renders that frame every way you asked
 > for. Point it at audio tracks and it measures them. There is a window if you
 > want one. See [Roadmap](#roadmap).
@@ -128,7 +129,7 @@ kiyas doctor              # what engines and tools are available, and what is mi
 kiyas setup               # install the VapourSynth stack into the current environment
 kiyas init project.toml   # write a starter project file
 kiyas run project.toml    # produce the comparison
-kiyas publish out/        # upload it to slow.pics
+kiyas publish out/        # upload it to a comparison host
 kiyas pick film.mkv       # choose frames by watching, in mpv
 kiyas templates           # list the built-in settings comparisons
 kiyas audio a.mkv b.mkv   # compare audio tracks
@@ -305,7 +306,7 @@ whether to add or replace would eventually destroy work.
 ```
 kiyas publish out/                  # unlisted, PNG preserved
 kiyas publish out/ --public         # listed on the site
-kiyas publish out/ --remove-after 7 # let slow.pics delete it after a week
+kiyas publish out/ --remove-after 7 # let the host delete it after a week
 kiyas run project.toml --publish    # do both in one go
 ```
 
@@ -316,6 +317,54 @@ than something that happens because you did not pass a flag.
 Every image is hashed before upload and the digests go up with the collection
 metadata, so slow.pics can say which ones it already holds. Re-running a
 publish that died halfway only sends what is missing.
+
+### Choosing a host
+
+```
+kiyas publish out/ --to comppics                 # comp.pics instead
+kiyas publish out/ --to comppics --tag remux     # tag it
+kiyas run project.toml --publish --publish-to comppics
+```
+
+slow.pics is the default and nothing about it changed. `--to comppics`
+publishes to [comp.pics](https://comp.pics), or to your own instance of the
+same software:
+
+```
+export KIYAS_COMPPICS_URL=https://comps.example     # or --host-url
+export KIYAS_COMPPICS_API_KEY=comps_...             # optional
+```
+
+The key is optional: anonymous uploads work, they simply leave the comparison
+with no owner, so it cannot be managed from an account afterwards. It is read
+from the environment rather than a config file because kiyas has no credential
+store and is not gaining one to hold a token that is not required.
+
+Three things work differently there, and kiyas says so on the way past rather
+than after the fact:
+
+- **There is no unlisted mode.** comp.pics lists every comparison to anyone who
+  asks, so `--public` has no meaning and publishing there is a more public act
+  than publishing to slow.pics with the same flags. A note is printed before
+  anything is sent.
+- **Nothing is kept forever.** The expiry is one of 1, 7, 30 or 90 days, so
+  `--remove-after` is snapped to the nearest of those and the choice is printed.
+  `--remove-after 0` — never, on slow.pics — becomes 7 days. `--expire-from`
+  chooses whether that clock runs from creation or from the last view.
+- **`--nsfw`, `--no-optimize` and `--tmdb` have no equivalent** and are named as
+  ignored if you pass them.
+
+In exchange, comp.pics gives every image its own URL, which is what the markup
+formats were written for:
+
+```
+kiyas publish out/ --to comppics --format comparison
+```
+
+On slow.pics that prints a link to the collection, because the upload hands
+back no per-image addresses. On comp.pics it prints the real thing: one tag
+holding the whole grid, frame by frame, which is what a reader can flip
+through.
 
 **Uploads are paced deliberately.** slow.pics is free, run by one person, and
 sits behind Cloudflare, which blocks addresses that arrive in bursts — a
@@ -347,7 +396,7 @@ later or from somewhere else.
 |---|---|---|
 | 0 | Environment setup, diagnostics, binary resolution | **done** |
 | 1 | Source model, project TOML, frame selection, VapourSynth + ffmpeg engines, tonemapping | **done** |
-| 2 | slow.pics upload, forum markup | **done** |
+| 2 | slow.pics and comp.pics upload, forum markup | **done** |
 | 3 | mpv layer: portable config dir, frame picker, settings comparison | **done** |
 | 4 | Audio: spectrograms, waveforms, frequency response, bit depth, offset, metadata table | **done** |
 | 5 | PySide6 desktop interface | **done** |

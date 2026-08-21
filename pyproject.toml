@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kiyas"
-version = "0.1.3"
-description = "A comparison workbench for video and audio releases: generate screenshots, analyse audio, publish to slow.pics"
+version = "0.1.4"
+description = "A comparison workbench for video and audio releases: generate screenshots, analyse audio, publish to a comparison host"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
 authors = [{ name = "blast1see" }]
-keywords = ["vapoursynth", "ffmpeg", "mpv", "slowpics", "comparison", "screenshots", "encoding"]
+keywords = ["vapoursynth", "ffmpeg", "mpv", "slowpics", "comppics", "comparison", "screenshots", "encoding"]
 classifiers = [
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
@@ -81,7 +81,7 @@ markers = [
     "vapoursynth: requires an installed VapourSynth stack",
     "mpv: requires an installed mpv binary",
     "gui: requires a graphical display",
-    "live: talks to slow.pics for real; never runs in CI",
+    "live: talks to a publishing host for real; never runs in CI",
 ]
 
 [tool.coverage.run]
