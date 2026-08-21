@@ -182,6 +182,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _count(number: int, noun: str, plural: str | None = None) -> str:
+    """`1 image`, `2 images`.
+
+    Counted nouns are printed from lengths all over this file, and a length is
+    1 often enough to matter: one source in a settings comparison, one frame in
+    a spot check. "1 rows x 1 sources" is how a tool looks like nobody ran it.
+
+    The explicit plural is for the irregular ones; everything else takes an s.
+    """
+    return f"{number} {noun}" if number == 1 else f"{number} {plural or noun + 's'}"
+
+
 def _cmd_run(args) -> int:
     from rich.console import Console
     from rich.markup import escape
@@ -218,8 +230,8 @@ def _cmd_run(args) -> int:
 
     console.print()
     console.print(
-        f"[green]{result.image_count} images[/green] "
-        f"({len(result.frames)} frames x {len(result.sources)} sources) "
+        f"[green]{_count(result.image_count, 'image')}[/green] "
+        f"({_count(len(result.frames), 'frame')} x {_count(len(result.sources), 'source')}) "
         f"using the {result.engine} engine"
     )
     for source in result.sources:
@@ -265,8 +277,9 @@ def _cmd_audio(args) -> int:
 
     console.print()
     console.print(
-        f"[green]{result.image_count} images[/green] "
-        f"({len(audio_run.ANALYSES)} analyses x {len(result.tracks)} tracks)"
+        f"[green]{_count(result.image_count, 'image')}[/green] "
+        f"({_count(len(audio_run.ANALYSES), 'analysis', 'analyses')} x "
+        f"{_count(len(result.tracks), 'track')})"
     )
     for offset in result.offsets:
         console.print(f"  offset: {escape(offset.summary)}")
@@ -382,10 +395,14 @@ def _comppics_sender(args, comparison, console):
     else:
         snapped = comppics.snap_expiration(days)
         if snapped != days:
-            allowed = ", ".join(str(day) for day in comppics.EXPIRATION_DAYS)
+            # The clock is left out of this one on purpose: --expire-from is
+            # the person's own choice, so repeating it here is noise. What they
+            # did not choose is the rounding, and that is what this says.
+            head = ", ".join(str(day) for day in comppics.EXPIRATION_DAYS[:-1])
             console.print(
-                f"[yellow]note:[/yellow] comppics only accepts {allowed} days; "
-                f"keeping this one {snapped} days {clock} instead of {days}."
+                f"[yellow]note:[/yellow] comppics only accepts "
+                f"{head} or {comppics.EXPIRATION_DAYS[-1]} days; keeping this one "
+                f"{_count(snapped, 'day')} instead of {_count(days, 'day')}."
             )
         days = snapped
 
@@ -424,8 +441,9 @@ def _cmd_publish(args, *, directory: Path | None = None) -> int:
 
     console.print(
         f"publishing [bold]{escape(comparison.title)}[/bold]: "
-        f"{comparison.total_images} images, "
-        f"{len(comparison.rows)} rows x {len(comparison.sources)} sources"
+        f"{_count(comparison.total_images, 'image')}, "
+        f"{_count(len(comparison.rows), 'row')} x "
+        f"{_count(len(comparison.sources), 'source')}"
     )
 
     try:
@@ -446,7 +464,7 @@ def _cmd_publish(args, *, directory: Path | None = None) -> int:
         status.stop()
 
     if result.skipped:
-        console.print(f"[dim]{result.skipped} image(s) were already on the server[/dim]")
+        console.print(f"[dim]the server already had {_count(result.skipped, 'image')}[/dim]")
     for note in result.notes:
         console.print(f"[yellow]note:[/yellow] {escape(note)}")
     console.print(f"\n[green]{escape(result.url)}[/green]")
@@ -570,7 +588,9 @@ def _cmd_pick(args) -> int:
         console.print("[yellow]no frames were marked[/yellow]")
         return 0
 
-    console.print(f"[green]{len(frames)} frame(s) marked[/green]. Paste this into your project:\n")
+    console.print(
+        f"[green]{_count(len(frames), 'frame')} marked[/green]. Paste this into your project:\n"
+    )
     console.print(escape(picker.as_toml(frames)))
     return 0
 

@@ -170,6 +170,17 @@ def _cells_by_position(session):
 _REAL_UPLOAD = comppics.upload
 
 
+def _unwrapped(text: str) -> str:
+    """Console output with its line breaks flattened.
+
+    The notes are prose, so rich is right to wrap them to the console width --
+    only the markup is printed with soft_wrap. That leaves an assertion about a
+    sentence depending on where the wrap happened to land, which is a property
+    of the terminal and not of the code under test.
+    """
+    return " ".join(text.split())
+
+
 def _against(session):
     """A stand-in for ``comppics.upload`` that talks to ``session``.
 
@@ -659,7 +670,7 @@ def test_publishing_to_comppics_warns_that_there_is_no_unlisted_mode(tmp_path, c
     code = cli.main(["publish", str(tmp_path / "out"), "--to", "comppics"])
 
     assert code == 0
-    assert "no unlisted mode" in capsys.readouterr().out
+    assert "no unlisted mode" in _unwrapped(capsys.readouterr().out)
 
 
 def test_slowpics_only_flags_are_named_when_dropped(tmp_path, capsys, monkeypatch):
@@ -684,7 +695,7 @@ def test_a_zero_remove_after_says_it_cannot_be_forever(tmp_path, capsys, monkeyp
     _make_output(tmp_path)
     cli.main(["publish", str(tmp_path / "out"), "--to", "comppics"])
 
-    assert "cannot keep a comparison forever" in capsys.readouterr().out
+    assert "cannot keep a comparison forever" in _unwrapped(capsys.readouterr().out)
 
 
 def test_a_snapped_remove_after_says_what_it_used(tmp_path, capsys, monkeypatch):
@@ -695,8 +706,8 @@ def test_a_snapped_remove_after_says_what_it_used(tmp_path, capsys, monkeypatch)
     _make_output(tmp_path)
     cli.main(["publish", str(tmp_path / "out"), "--to", "comppics", "--remove-after", "14"])
 
-    out = capsys.readouterr().out
-    assert "keeping this one 7 days" in out
+    out = _unwrapped(capsys.readouterr().out)
+    assert "keeping this one 7 days instead of 14 days" in out
 
 
 def test_markup_uses_the_per_image_urls_when_the_host_gives_them(tmp_path, capsys, monkeypatch):
@@ -731,3 +742,34 @@ def test_markup_urls_survive_the_terminal(tmp_path, capsys, monkeypatch):
     padding = "a" * 32
     assert f"https://comp.pics/uploads/cmp-1/col0-row0-{padding}.png" in out
     assert f"https://comp.pics/uploads/cmp-1/col1-row1-{padding}.png" in out
+
+
+def test_a_single_source_is_not_announced_as_sources(tmp_path, capsys, monkeypatch):
+    """The line that prompted the counting helper: "3 rows x 1 sources".
+
+    A one-column comparison is a real shape here -- a single release published
+    on its own -- so this is not a corner nobody reaches.
+    """
+    from kiyas import cli
+
+    monkeypatch.setattr(comppics, "upload", _against(_FakeSession()))
+
+    _make_output(tmp_path, sources=("ONLY",), frames=(10, 20, 30))
+    cli.main(["publish", str(tmp_path / "out"), "--to", "comppics"])
+
+    out = _unwrapped(capsys.readouterr().out)
+    assert "3 rows x 1 source" in out
+    assert "1 sources" not in out
+
+
+def test_a_snap_down_to_one_says_day_not_days(tmp_path, capsys, monkeypatch):
+    """Two days rounds to one, and one day is not "1 days"."""
+    from kiyas import cli
+
+    monkeypatch.setattr(comppics, "upload", _against(_FakeSession()))
+
+    _make_output(tmp_path)
+    cli.main(["publish", str(tmp_path / "out"), "--to", "comppics", "--remove-after", "2"])
+
+    out = _unwrapped(capsys.readouterr().out)
+    assert "keeping this one 1 day instead of 2 days" in out

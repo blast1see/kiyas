@@ -38,6 +38,18 @@ reads as a dramatic difference between the releases. Checked against the live
 service by giving all nine cells of a 3x3 different file sizes and reading them
 back out of the server's own JSON.
 
+### Counted nouns now agree with their numbers
+
+Publishing a single source printed "3 rows x 1 sources", and the same fault was
+in the `run` and `audio` summaries, in the count of frames the picker marked,
+and in the count of images the server already had. A length of one is not a
+corner here — one source published on its own, one frame in a spot check — and
+"1 sources" is how a tool looks like nobody ever ran it.
+
+One helper now does the agreeing, including for the irregular "1 analysis / 3
+analyses", and the expiry note that rounds 2 days down says "1 day" rather than
+"1 days".
+
 ### What is different over there
 
 - **There is no unlisted mode.** The API lists every comparison to anyone who
