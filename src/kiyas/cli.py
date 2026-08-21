@@ -18,7 +18,7 @@ from . import __version__
 # subcommands import.
 from .media.binaries import BinaryNotFound
 
-_DESCRIPTION = "Comparison workbench: screenshots, audio analysis, slow.pics publishing."
+_DESCRIPTION = "Comparison workbench: screenshots, audio analysis, publishing."
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -76,8 +76,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not burn the source name into the frame.",
     )
     run_cmd.add_argument("--output", type=Path, default=None, help="Override the output directory.")
+    run_cmd.add_argument("--publish", action="store_true", help="Publish when the run finishes.")
     run_cmd.add_argument(
-        "--publish", action="store_true", help="Upload to slow.pics when the run finishes."
+        "--publish-to",
+        choices=("slowpics", "comppics"),
+        default="slowpics",
+        help="Where --publish sends the comparison. Default: slowpics.",
     )
 
     audio_help = "Compare the audio tracks of two or more files."
@@ -94,11 +98,15 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Which audio stream to take from each file. Default: the first.",
     )
+    audio.add_argument("--publish", action="store_true", help="Publish when the analysis finishes.")
     audio.add_argument(
-        "--publish", action="store_true", help="Upload to slow.pics when the analysis finishes."
+        "--publish-to",
+        choices=("slowpics", "comppics"),
+        default="slowpics",
+        help="Where --publish sends the comparison. Default: slowpics.",
     )
 
-    publish_help = "Upload an already-produced comparison to slow.pics."
+    publish_help = "Upload an already-produced comparison to a comparison host."
     publish = sub.add_parser("publish", help=publish_help, description=publish_help)
     publish.add_argument(
         "path",
@@ -108,29 +116,60 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output directory or manifest file from a previous run.",
     )
     publish.add_argument(
+        "--to",
+        choices=("slowpics", "comppics"),
+        default="slowpics",
+        help="Which host to publish to. Default: slowpics.",
+    )
+    publish.add_argument(
+        "--host-url",
+        default=None,
+        metavar="URL",
+        help="Publish to a self-hosted comppics instance instead of comp.pics. "
+        "Also read from KIYAS_COMPPICS_URL.",
+    )
+    publish.add_argument(
+        "--tag",
+        dest="tags",
+        action="append",
+        metavar="TAG",
+        help="Tag the comparison. Repeatable. comppics only.",
+    )
+    publish.add_argument(
+        "--expire-from",
+        choices=("creation", "last-access"),
+        default="last-access",
+        help="Whether the expiry clock runs from when the comparison was made "
+        "or from when it was last viewed. comppics only.",
+    )
+    publish.add_argument(
         "--public",
         action="store_true",
-        help="List the comparison publicly. Unlisted by default.",
+        help="List the comparison publicly. Unlisted by default. slowpics only.",
     )
-    publish.add_argument("--nsfw", action="store_true", help="Flag the collection as adult.")
+    publish.add_argument(
+        "--nsfw", action="store_true", help="Flag the collection as adult. slowpics only."
+    )
     publish.add_argument(
         "--no-optimize",
         action="store_true",
-        help="Ask slow.pics not to recompress the PNGs.",
+        help="Ask the host not to recompress the PNGs. slowpics only.",
     )
     publish.add_argument(
         "--remove-after",
         type=int,
         default=0,
         metavar="DAYS",
-        help="Have slow.pics delete the collection after this many days.",
+        help="Delete the comparison after this many days. Zero means never, "
+        "which comppics cannot do -- there it is snapped to the nearest of "
+        "1, 7, 30 or 90.",
     )
     publish.add_argument(
         "--tmdb",
         default=None,
         metavar="ID",
         help="Attach a TMDB id, as MOVIE_1275779 or TV_1399. A bare number is "
-        "refused: slow.pics needs to know which of the two it is.",
+        "refused: slow.pics needs to know which of the two it is. slowpics only.",
     )
     publish.add_argument(
         "--format",
@@ -189,7 +228,7 @@ def _cmd_run(args) -> int:
 
     if args.publish:
         console.print()
-        return _cmd_publish(_publish_defaults(), directory=project.output)
+        return _cmd_publish(_publish_defaults(args.publish_to), directory=project.output)
     return 0
 
 
@@ -238,21 +277,28 @@ def _cmd_audio(args) -> int:
 
     if args.publish:
         console.print()
-        return _cmd_publish(_publish_defaults(), directory=output)
+        return _cmd_publish(_publish_defaults(args.publish_to), directory=output)
     return 0
 
 
-def _publish_defaults():
-    """Publishing options for `run --publish`.
+def _publish_defaults(target: str = "slowpics"):
+    """Publishing options for `run --publish` and `audio --publish`.
 
-    Deliberately the conservative set: unlisted, no expiry, no markup. Anything
-    that pushes a comparison further into the world than the person asked for
-    should need them to say so.
+    Deliberately the conservative set: unlisted where the host has such a
+    thing, no expiry, no markup. Anything that pushes a comparison further into
+    the world than the person asked for should need them to say so.
+
+    The target is the one thing taken from the command line, because there the
+    person did say: it comes from `--publish-to`.
     """
     from argparse import Namespace
 
     return Namespace(
         path=None,
+        to=target,
+        host_url=None,
+        tags=None,
+        expire_from="last-access",
         public=False,
         nsfw=False,
         no_optimize=False,
@@ -262,12 +308,110 @@ def _publish_defaults():
     )
 
 
+#: Options only slow.pics understands, paired with the flag that sets them.
+#: Naming them lets the comppics path say which ones it dropped rather than
+#: dropping them quietly -- somebody who typed `--public` has a belief about
+#: what is about to happen, and it is wrong on that host in both directions.
+_SLOWPICS_ONLY = (
+    ("--public", "public"),
+    ("--nsfw", "nsfw"),
+    ("--no-optimize", "no_optimize"),
+    ("--tmdb", "tmdb"),
+)
+
+
+def _slowpics_sender(args, comparison, console):
+    from .publish import slowpics
+
+    if getattr(args, "host_url", None):
+        raise ValueError("--host-url only applies to --to comppics; slow.pics is one site.")
+    if getattr(args, "tags", None):
+        raise ValueError("--tag only applies to --to comppics; slow.pics has no tags.")
+
+    # Checked before anything is sent. A malformed id comes back from the
+    # server as a bare 400 with no body, after the whole comparison has been
+    # hashed and offered -- a slow way to learn about a typo.
+    if args.tmdb:
+        slowpics.normalise_tmdb(args.tmdb)
+
+    def send(progress):
+        return slowpics.upload(
+            comparison,
+            public=args.public,
+            nsfw=args.nsfw,
+            optimize=not args.no_optimize,
+            remove_after_days=args.remove_after,
+            tmdb_id=args.tmdb,
+            progress=progress,
+        )
+
+    return send
+
+
+def _comppics_sender(args, comparison, console):
+    from rich.markup import escape
+
+    from .publish import comppics
+
+    dropped = [flag for flag, attr in _SLOWPICS_ONLY if getattr(args, attr, None)]
+    if dropped:
+        console.print(
+            f"[yellow]ignored:[/yellow] {escape(', '.join(dropped))} — comppics has no equivalent."
+        )
+
+    # Said before anything is sent rather than after. This host has no unlisted
+    # mode at all: its own API hands the whole catalogue to anyone who asks, so
+    # publishing here is a more public act than publishing to slow.pics with
+    # the same flags. Somebody relying on the defaults being timid should hear
+    # that while they can still stop it.
+    console.print(
+        "[yellow]note:[/yellow] comppics has no unlisted mode; this comparison "
+        "will be listed publicly."
+    )
+
+    expiration_type = "from_creation" if args.expire_from == "creation" else "from_last_access"
+    clock = "after it was created" if args.expire_from == "creation" else "after it was last viewed"
+
+    days = args.remove_after
+    if days <= 0:
+        days = 7
+        console.print(
+            f"[yellow]note:[/yellow] comppics cannot keep a comparison forever; "
+            f"this one goes away 7 days {clock}."
+        )
+    else:
+        snapped = comppics.snap_expiration(days)
+        if snapped != days:
+            allowed = ", ".join(str(day) for day in comppics.EXPIRATION_DAYS)
+            console.print(
+                f"[yellow]note:[/yellow] comppics only accepts {allowed} days; "
+                f"keeping this one {snapped} days {clock} instead of {days}."
+            )
+        days = snapped
+
+    def send(progress):
+        return comppics.upload(
+            comparison,
+            base_url=args.host_url,
+            tags=tuple(args.tags or ()),
+            expiration_days=days,
+            expiration_type=expiration_type,
+            progress=progress,
+        )
+
+    return send
+
+
+_SENDERS = {"slowpics": _slowpics_sender, "comppics": _comppics_sender}
+
+
 def _cmd_publish(args, *, directory: Path | None = None) -> int:
     from rich.console import Console
     from rich.markup import escape
 
-    from .publish import bbcode, load_manifest, slowpics
+    from .publish import bbcode, load_manifest
     from .publish.manifest import ManifestError
+    from .publish.result import UploadError
 
     console = Console()
     target = directory if directory is not None else args.path
@@ -284,29 +428,17 @@ def _cmd_publish(args, *, directory: Path | None = None) -> int:
         f"{len(comparison.rows)} rows x {len(comparison.sources)} sources"
     )
 
-    # Checked before anything is sent. A malformed id comes back from the server
-    # as a bare 400 with no body, after the whole comparison has been hashed and
-    # offered -- a slow way to learn about a typo.
-    if args.tmdb:
-        try:
-            slowpics.normalise_tmdb(args.tmdb)
-        except ValueError as exc:
-            console.print(f"[red]{escape(str(exc))}[/red]")
-            return 1
+    try:
+        send = _SENDERS[getattr(args, "to", "slowpics")](args, comparison, console)
+    except ValueError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        return 1
 
     status = console.status("preparing")
     status.start()
     try:
-        result = slowpics.upload(
-            comparison,
-            public=args.public,
-            nsfw=args.nsfw,
-            optimize=not args.no_optimize,
-            remove_after_days=args.remove_after,
-            tmdb_id=args.tmdb,
-            progress=lambda text: status.update(escape(text)),
-        )
-    except slowpics.UploadError as exc:
+        result = send(lambda text: status.update(escape(text)))
+    except UploadError as exc:
         status.stop()
         console.print(f"[red]{escape(str(exc))}[/red]")
         return 1
@@ -315,20 +447,41 @@ def _cmd_publish(args, *, directory: Path | None = None) -> int:
 
     if result.skipped:
         console.print(f"[dim]{result.skipped} image(s) were already on the server[/dim]")
+    for note in result.notes:
+        console.print(f"[yellow]note:[/yellow] {escape(note)}")
     console.print(f"\n[green]{escape(result.url)}[/green]")
 
     for fmt in args.formats or []:
-        # Every image lives inside the collection, so the per-image URLs a
-        # forum tag needs are not something the upload hands back. The link is
-        # what gets posted; the markup formats stay available for anyone who
-        # rehosts elsewhere.
         console.print(f"\n[bold]{fmt}[/bold]")
-        if fmt == "markdown":
-            console.print(f"[{escape(comparison.title)}]({escape(result.url)})")
-        else:
-            console.print(escape(bbcode.collection_link(comparison, result.url)))
+        try:
+            # soft_wrap because this is markup somebody is about to copy. Left
+            # to wrap at the console width, rich breaks the long image URLs
+            # mid-token and inserts real newlines, so what gets pasted into a
+            # forum is a list of dead links. Measured: a four-line comparison
+            # tag came out as eight lines at width 80.
+            console.print(escape(_markup(comparison, result, fmt)), soft_wrap=True)
+        except bbcode.BBCodeError as exc:
+            console.print(f"[red]{escape(str(exc))}[/red]")
 
     return 0
+
+
+def _markup(comparison, result, fmt: str) -> str:
+    """Forum markup for a published comparison, as good as the host allows.
+
+    A host that gives every image its own address gets the real thing: one tag
+    holding the whole grid, which is what a reader can actually flip through.
+    slow.pics keeps its images inside the collection and hands back no
+    per-image URLs, so there the link is what gets posted -- the markup formats
+    stay available for anyone who rehosts elsewhere.
+    """
+    from .publish import bbcode
+
+    if result.image_urls:
+        return bbcode.render(comparison, result.image_urls, fmt)
+    if fmt == "markdown":
+        return f"[{comparison.title}]({result.url})"
+    return bbcode.collection_link(comparison, result.url)
 
 
 def _cmd_init(args) -> int:
