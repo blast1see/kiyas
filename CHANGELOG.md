@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.1.4
+
+### A second place to publish
+
+`kiyas publish --to comppics` uploads to comp.pics, or with `--host-url` to any
+instance of the software behind it. slow.pics stays the default and nothing
+about that path changed.
+
+What made it worth doing is that this API is documented. slow.pics has none, so
+`publish/slowpics.py` was read off a working client and then checked against
+the live service; comp.pics publishes an OpenAPI document and its server is
+open source, so the shapes in `publish/comppics.py` could be read rather than
+inferred.
+
+### The markup formats finally have something to point at
+
+`--format comparison`, `img` and `markdown` have existed since 0.1.0 and have
+never once produced what they describe. Every image on slow.pics lives inside
+the collection and the upload hands back no per-image address, so all three
+degraded to a single link. comp.pics gives every image its own URL, so they now
+emit the real thing: one tag holding the whole grid, frame by frame.
+
+Which surfaced a bug in how they were printed. rich wraps to the console width,
+and a comparison tag full of UUID-length URLs came out as eight lines instead
+of four, broken mid-URL. Markup that exists to be copied has to survive being
+copied.
+
+### The transpose, from the other direction
+
+slow.pics returns `images[frame][source]` while kiyas holds
+`sources[source][frame]`, and getting that swap right took a while in 0.1.0.
+comp.pics takes `row` and `column` as separate fields, so there is no swap —
+which makes performing one out of habit the mistake available here. It is the
+same silent one: every picture in the wrong cell, no error, and a result that
+reads as a dramatic difference between the releases. Checked against the live
+service by giving all nine cells of a 3x3 different file sizes and reading them
+back out of the server's own JSON.
+
+### What is different over there
+
+- **There is no unlisted mode.** The API lists every comparison to anyone who
+  asks, so publishing there is a more public act than the same command against
+  slow.pics. It says so before it sends anything.
+- **Nothing is kept forever.** The expiry is one of 1, 7, 30 or 90 days, so
+  `--remove-after` is snapped to the nearest of those and the choice is printed.
+- **The public instance does not apply the expiry it is given.** Asked for one
+  day, it stored seven, twice. The field is in the spec and the current server
+  source honours it, so the request is right and that deployment is behind.
+  kiyas compares what came back and reports the difference rather than leaving
+  someone to believe they got what they asked for.
+- `--nsfw`, `--no-optimize` and `--tmdb` have no equivalent, and are named as
+  ignored if passed.
+
+An account is optional. Uploads work anonymously; `KIYAS_COMPPICS_API_KEY` and
+`KIYAS_COMPPICS_URL` are read from the environment when they are set, so there
+is still no credential store.
+
 ## 0.1.3
 
 ### One refusal now stops the whole upload
