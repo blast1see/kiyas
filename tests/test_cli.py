@@ -160,3 +160,23 @@ def test_a_missing_external_tool_is_an_answer_not_a_traceback(monkeypatch, capsy
     assert "not found on PATH" in printed
     assert "kiyas doctor" in printed
     assert "Traceback" not in printed
+
+
+@pytest.mark.parametrize(
+    ("number", "noun", "plural", "expected"),
+    [
+        (1, "source", None, "1 source"),
+        (2, "source", None, "2 sources"),
+        (0, "image", None, "0 images"),
+        (1, "analysis", "analyses", "1 analysis"),
+        (3, "analysis", "analyses", "3 analyses"),
+    ],
+)
+def test_counted_nouns_agree_with_their_number(number, noun, plural, expected):
+    """A length of one is common enough here to be worth getting right.
+
+    One source in a settings comparison, one frame in a spot check, one image
+    the server already had. Printing "1 rows x 1 sources" is how a tool looks
+    like nobody ever ran it.
+    """
+    assert cli._count(number, noun, plural) == expected
