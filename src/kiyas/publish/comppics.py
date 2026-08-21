@@ -108,8 +108,9 @@ def _upload_timeout(size_bytes: int) -> float:
     return max(90.0, 30.0 * size_bytes / 1_000_000)
 
 
-def _days(count: int) -> str:
-    return "1 day" if count == 1 else f"{count} days"
+def _count(number: int, noun: str) -> str:
+    """`1 day`, `2 days`. A count of one turns up here often enough to matter."""
+    return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
 
 
 def _host(base_url: str) -> str:
@@ -346,8 +347,8 @@ def upload(
     stored_days = response.get("expiration_days")
     if stored_days is not None and int(stored_days) != metadata["expiration_days"]:
         notes.append(
-            f"asked {host} to keep this for {_days(metadata['expiration_days'])}; "
-            f"it stored {_days(int(stored_days))}."
+            f"asked {host} to keep this for {_count(metadata['expiration_days'], 'day')}; "
+            f"it stored {_count(int(stored_days), 'day')}."
         )
 
     cells = build_cells(comparison)
@@ -403,7 +404,7 @@ def _send_images(client, api, comparison_id, edit_token, cells, host, progress) 
     if errors:
         shown = "\n  ".join(errors[:5])
         more = f"\n  ... and {len(errors) - 5} more" if len(errors) > 5 else ""
-        raise UploadError(f"{len(errors)} image(s) failed to upload:\n  {shown}{more}")
+        raise UploadError(f"{_count(len(errors), 'image')} failed to upload:\n  {shown}{more}")
 
     return [name for name in filenames if name is not None]
 
