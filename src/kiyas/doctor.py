@@ -39,6 +39,17 @@ def _install_vs_hint() -> str:
     return _INSTALL_VS_FROZEN if is_frozen() else _INSTALL_VS
 
 
+def _package_hint(hint: str) -> str:
+    """The hint for an optional package, honest about a frozen build."""
+    from .setup_env import is_frozen
+
+    if not is_frozen():
+        return hint
+    return {_INSTALL_AUDIO: _INSTALL_AUDIO_FROZEN, _INSTALL_SYNC: _INSTALL_SYNC_FROZEN}.get(
+        hint, hint
+    )
+
+
 _INSTALL_FFMPEG = (
     "Install FFmpeg and put its bin directory on PATH, or set it under [tools] in the config."
 )
@@ -48,6 +59,20 @@ _INSTALL_MPV = (
 )
 _INSTALL_AUDIO = "Run 'pip install kiyas[audio]' for audio analysis."
 _INSTALL_GUI = "Run 'pip install kiyas[gui]' for the desktop interface."
+
+#: The packaged build has no pip and no interpreter to point one at, so every
+#: hint that starts "pip install" is an instruction it cannot follow. Same rule
+#: as the VapourSynth hint above, and the same reason: a diagnostic that tells
+#: you to do an impossible thing is worse than one that says nothing.
+_INSTALL_AUDIO_FROZEN = (
+    "The packaged build does not carry the audio libraries. Audio analysis needs a "
+    "checkout: run bootstrap.ps1, or 'pip install kiyas[audio]' in an environment."
+)
+_INSTALL_SYNC_FROZEN = (
+    "Optional, and the packaged build cannot install it. In a checkout:\n"
+    "pip install git+https://github.com/blast1see/AudioSyncTool\n"
+    "Without it kiyas falls back to a coarse correlation."
+)
 _INSTALL_SYNC = (
     "Optional. For accurate offset measurement:\n"
     "pip install git+https://github.com/blast1see/AudioSyncTool\n"
@@ -402,7 +427,7 @@ def check_packages() -> list[Check]:
                 name=f"{module} ({extra})",
                 status=Status.OK if found else Status.MISSING,
                 detail="installed" if found else "not installed",
-                hint="" if found else hint,
+                hint="" if found else _package_hint(hint),
             )
         )
     return checks

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from kiyas import doctor
+from kiyas import doctor, setup_env
 from kiyas.doctor import Check, Report, Status
 
 
@@ -170,3 +170,49 @@ def test_render_returns_zero_when_an_engine_exists(capsys):
 
     assert doctor.render(report) == 0
     assert capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# Hints a frozen build cannot follow
+# --------------------------------------------------------------------------
+
+
+def test_a_frozen_build_is_not_told_to_run_pip(monkeypatch):
+    """It has no pip and no interpreter to point one at.
+
+    CLAUDE.md already settled this for `kiyas setup`: a diagnostic that tells
+    you to do an impossible thing is worse than one that says nothing. The
+    optional-package hints were still saying "pip install", which is the same
+    instruction in a different table.
+    """
+    monkeypatch.setattr(setup_env, "is_frozen", lambda: True)
+
+    hints = [check.hint for check in doctor.check_packages() if check.hint]
+
+    assert hints, "nothing to check: every optional package is installed here"
+    for hint in hints:
+        assert not hint.startswith("Run 'pip install"), hint
+        assert "checkout" in hint or "environment" in hint
+
+
+def test_an_ordinary_install_still_gets_the_pip_line(monkeypatch):
+    """The hint that works is the one worth giving where it works."""
+    monkeypatch.setattr(setup_env, "is_frozen", lambda: False)
+
+    hints = [check.hint for check in doctor.check_packages() if check.hint]
+
+    assert any("pip install" in hint for hint in hints)
+
+
+def test_the_audio_message_says_what_a_frozen_build_can_do(monkeypatch):
+    from kiyas.audio import analysis
+
+    monkeypatch.setattr(setup_env, "is_frozen", lambda: True)
+    frozen = analysis._missing_libraries_message()
+
+    monkeypatch.setattr(setup_env, "is_frozen", lambda: False)
+    ordinary = analysis._missing_libraries_message()
+
+    assert "packaged build" in frozen
+    assert "bootstrap" in frozen
+    assert frozen != ordinary

@@ -89,6 +89,12 @@ stack of compiled plugins that installs into a Python environment, so that one
 needs a checkout. Each release carries a `.sha256` beside the zip, written by
 the same runner that built it from the tagged commit.
 
+**Audio comparisons need a checkout too.** numpy, scipy and matplotlib come to
+180 MB against a 58 MB package, and the whole argument for the packaged build
+is that it is the small download. Picture comparisons and publishing work
+there; `kiyas audio` says so rather than telling you to run a `pip install` it
+has no pip for.
+
 **A checkout**, for the VapourSynth engine and for working on it:
 
 ```powershell
