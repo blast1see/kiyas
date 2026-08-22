@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.10
+
+### The window stops offering an engine it cannot run
+
+The engine dropdown listed all four whatever the machine had. In a packaged
+build, which has no VapourSynth, picking it was allowed and the answer came
+back as a `RunError` — after the comparison had been set up, and with nothing
+in the window to suggest it would fail.
+
+Missing engines are still listed, greyed, with the reason in the name:
+`vapoursynth (not installed here)`. Hiding them would be worse — then the
+engine that does what you want is simply absent and nothing says why.
+
+`auto` stays selectable whatever is missing, and a probe that throws leaves
+every entry enabled rather than emptying the list.
+
 ## 0.1.9
 
 ### Columns that are not the same size say so

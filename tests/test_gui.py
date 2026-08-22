@@ -702,3 +702,53 @@ def test_an_absolute_output_is_left_alone(window, tmp_path):
     window._comparison_work()
 
     assert window._output_directory == elsewhere
+
+
+def test_an_engine_this_build_cannot_run_is_offered_but_not_selectable(window, monkeypatch):
+    """Offering all four and failing at Run is how somebody finds out.
+
+    That is what happened: a packaged build has no VapourSynth, the dropdown
+    listed it anyway, and the answer arrived as a RunError after the
+    comparison had been set up. Hiding it would be worse -- then the engine
+    that does what they want is simply absent and nothing says why.
+    """
+    from kiyas import engines as engine_registry
+    from kiyas.gui import window as window_module
+
+    monkeypatch.setattr(engine_registry, "available_engines", lambda *a, **k: ["ffmpeg", "mpv"])
+
+    fresh = window_module.MainWindow()
+    try:
+        labels = [fresh.engine_combo.itemText(i) for i in range(fresh.engine_combo.count())]
+        model = fresh.engine_combo.model()
+        enabled = {
+            fresh.engine_combo.itemData(i): model.item(i).isEnabled()
+            for i in range(fresh.engine_combo.count())
+        }
+    finally:
+        fresh.close()
+
+    assert any("vapoursynth (not installed here)" == text for text in labels)
+    assert enabled["vapoursynth"] is False
+    assert enabled["ffmpeg"] is True
+    assert enabled["auto"] is True, "auto has to stay reachable whatever is missing"
+
+
+def test_every_engine_is_selectable_when_all_are_present(window, monkeypatch):
+    from kiyas import engines as engine_registry
+    from kiyas.gui import window as window_module
+
+    monkeypatch.setattr(
+        engine_registry, "available_engines", lambda *a, **k: ["vapoursynth", "ffmpeg", "mpv"]
+    )
+
+    fresh = window_module.MainWindow()
+    try:
+        model = fresh.engine_combo.model()
+        assert all(model.item(i).isEnabled() for i in range(fresh.engine_combo.count()))
+        assert all(
+            "not installed" not in fresh.engine_combo.itemText(i)
+            for i in range(fresh.engine_combo.count())
+        )
+    finally:
+        fresh.close()
