@@ -71,7 +71,17 @@ def _capture_indexing(report: Callable[[str], None] | None, label: str) -> Itera
 
     log_handle = vs.core.add_log_handler(handler)
 
-    sys.stderr.flush()
+    # `sys.stderr` is None in a windowed build, not merely closed: a GUI entry
+    # point runs without a console and Python leaves the streams unset. The
+    # line below used to be an unguarded flush, so opening any source with this
+    # engine from the window died on 'NoneType' object has no attribute
+    # 'flush' -- before a single frame was read. The check under it already
+    # named pythonw as a case; this one was written as though stderr were
+    # always an object.
+    if sys.stderr is not None:
+        with contextlib.suppress(Exception):
+            sys.stderr.flush()
+
     try:
         saved_fd = os.dup(2)
     except OSError:
