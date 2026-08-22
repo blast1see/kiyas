@@ -110,23 +110,6 @@ def _has_drawtext(ffmpeg: Path) -> bool:
     return " drawtext " in (proc.stdout or "")
 
 
-def _escape_filter_path(path: Path) -> str:
-    """A filesystem path as a filter option value.
-
-    A Windows drive letter is the problem: ``C:/Users/...`` puts a colon where
-    the filtergraph expects the next option to start.
-
-    The colon needs **two** backslashes, not one. Measured against ffmpeg
-    2026-08 with the argument passed directly to the process, no shell
-    involved: ``C\\:/path`` is rejected with "No option name near
-    '/Users/...'", because one backslash is consumed by the option-value parser
-    and the colon then reaches the filtergraph splitter unprotected.
-    ``C\\\\:/path`` survives both. Backslashes become forward slashes first, so
-    the only backslashes left are the ones put there on purpose.
-    """
-    return str(path).replace("\\", "/").replace(":", "\\\\:")
-
-
 class FfmpegSource:
     def __init__(
         self,
