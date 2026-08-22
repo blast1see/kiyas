@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.7
+
+### The window puts screenshots where you would look for them
+
+Typing `out` in the output box resolved against the process's working
+directory, which a window has no way of showing. Launched from a file dialog
+that had last visited another drive, a comparison of two files wrote its
+screenshots to `E:\out` — correct by the rule, and not where the person who
+asked for it would look.
+
+The audio side of the same window already resolved a relative output against
+the first source. Both modes now agree about what `out` means. Absolute paths
+are untouched, and the command line is unchanged: there the working directory
+is something you typed.
+
 ## 0.1.6
 
 ### The ffmpeg engine says what it left out
