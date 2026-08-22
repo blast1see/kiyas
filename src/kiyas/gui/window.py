@@ -273,14 +273,38 @@ class MainWindow(QMainWindow):
         engine_row = QHBoxLayout()
         engine_row.addWidget(QLabel("Engine"))
         self.engine_combo = QComboBox()
-        for engine in Engine:
-            self.engine_combo.addItem(engine.value, engine.value)
+        self._fill_engines()
         engine_row.addWidget(self.engine_combo, stretch=1)
         output.addLayout(engine_row)
         layout.addWidget(output_box)
 
         layout.addStretch(1)
         return panel
+
+    def _fill_engines(self) -> None:
+        """List the engines, and say which of them this build cannot run.
+
+        Offering all four and failing at Run is how somebody finds out that a
+        packaged build has no VapourSynth -- after setting up a comparison,
+        from a RunError. Hiding the missing ones would be worse: then the
+        engine that does what they want simply is not there and nothing says
+        why. So they stay, greyed, with the reason in the name.
+        """
+        from .. import engines as engine_registry
+
+        try:
+            usable = set(engine_registry.available_engines())
+        except Exception:  # noqa: BLE001 - a broken probe must not stop the window
+            usable = {engine.value for engine in Engine}
+
+        model = self.engine_combo.model()
+        for index, engine in enumerate(Engine):
+            here = engine is Engine.AUTO or engine.value in usable
+            label = engine.value if here else f"{engine.value} (not installed here)"
+            self.engine_combo.addItem(label, engine.value)
+            item = model.item(index)
+            if item is not None and not here:
+                item.setEnabled(False)
 
     def _build_run_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -597,7 +621,9 @@ class MainWindow(QMainWindow):
         self.b_frames_check.setChecked(frames.b_frames_only)
         self.skip_dark_check.setChecked(frames.skip_dark)
 
-        self.engine_combo.setCurrentText(project.engine.value)
+        wanted = self.engine_combo.findData(project.engine.value)
+        if wanted >= 0:
+            self.engine_combo.setCurrentIndex(wanted)
         self.output_edit.setText(str(project.output))
 
         self._variants = list(project.settings.variants) if project.settings else []
