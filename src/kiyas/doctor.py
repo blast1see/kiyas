@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from . import assets
 from .media import binaries
 
 _INSTALL_VS = "Run 'kiyas setup' to install the VapourSynth stack into this environment."
@@ -221,6 +222,10 @@ _FFMPEG_FILTERS = {
     "zscale": "SDR conversion",
     "libplacebo": "HDR tonemapping",
     "showspectrumpic": "audio spectrograms",
+    # Needs libfreetype at build time, and the minimal builds some package
+    # managers ship do not have it -- the same gap as the essentials build
+    # having no zscale. Without it the ffmpeg engine captures unlabelled.
+    "drawtext": "burning the source name into the frame",
 }
 
 
@@ -271,6 +276,17 @@ def check_ffmpeg() -> tuple[Check, Check]:
         engine = Check("ffmpeg", Status.PARTIAL, f"{version}; missing: {lost}")
     else:
         engine = Check("ffmpeg", Status.OK, version)
+
+    if assets.label_font() is None and engine.status is Status.OK:
+        # The font ships inside the package, so it is only ever missing from a
+        # broken install or a frozen build that left it behind -- which is
+        # exactly the case that would otherwise be found by noticing that a
+        # published comparison has no labels on it.
+        engine = Check(
+            "ffmpeg",
+            Status.PARTIAL,
+            f"{version}; the bundled label font is missing, so captures will be unlabelled",
+        )
 
     tool = Check("ffmpeg", engine.status, str(ffmpeg.path))
     return engine, tool
