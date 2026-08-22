@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.11
+
+### The VapourSynth engine could not run from the window at all
+
+Opening any source with it died on `'NoneType' object has no attribute
+'flush'` before a single frame was read. A windowed build has no console, so
+Python leaves `sys.stderr` unset — it is `None`, not a closed file — and the
+indexing capture flushed it unguarded.
+
+The irony is that the very next line already handled this case: redirecting
+file descriptor 2 is wrapped in a `try` whose comment names pythonw. Only the
+flush above it was written as though stderr were always an object. So the
+console build worked, the tests worked, and the engine had never once worked
+from `kiyas-gui.exe`.
+
+A stderr that raises on use is now tolerated too, for the capture modes that
+hand one back.
+
 ## 0.1.10
 
 ### The window stops offering an engine it cannot run

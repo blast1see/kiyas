@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 
 import pytest
 
@@ -148,3 +149,39 @@ def test_letterbox_bars_do_not_make_a_bright_frame_look_dark(tmp_path):
         assert prepared.mean_luma(10) > DARK_LUMA_THRESHOLD
     finally:
         prepared.close()
+
+
+# -------------------------------------------------------- windowed builds --
+
+
+def test_indexing_capture_survives_a_build_with_no_stderr(monkeypatch):
+    """A GUI entry point runs without a console and Python leaves the streams
+    unset -- `sys.stderr` is None, not a closed file.
+
+    This one shipped: opening any source with this engine from the window died
+    on "'NoneType' object has no attribute 'flush'" before a frame was read, so
+    the VapourSynth engine had never worked from the GUI at all. The check
+    below it already named pythonw as a case; the flush above it was written as
+    though stderr were always an object.
+    """
+    monkeypatch.setattr(sys, "stderr", None)
+
+    with vs_engine._capture_indexing(None, "source") as leftovers:
+        pass
+
+    assert leftovers == []
+
+
+def test_indexing_capture_survives_a_stderr_that_refuses_to_flush(monkeypatch):
+    """Some capture modes hand back a stream that raises on use."""
+
+    class _Hostile:
+        def flush(self):
+            raise ValueError("I/O operation on closed file")
+
+    monkeypatch.setattr(sys, "stderr", _Hostile())
+
+    with vs_engine._capture_indexing(None, "source") as leftovers:
+        pass
+
+    assert leftovers == []
