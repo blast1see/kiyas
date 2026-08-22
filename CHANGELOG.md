@@ -81,6 +81,18 @@ integration-tested on synthetic media, so the detector is checked by hand
 against real material the way frame accuracy and tonemapping are, and the
 tests here pin down everything around it.
 
+### `--tmdb` takes a name
+
+`--tmdb MOVIE_1275779` is the reference slow.pics wants and nobody knows that
+number, so in practice an optional field went unfilled. Anything that is not a
+reference is now looked up by name, with a key read from `KIYAS_TMDB_API_KEY`.
+
+It refuses rather than guesses. One match resolves; several print the
+candidates and ask, because "Dune" is two films twenty years apart and taking
+whichever TMDB ranks higher attaches the comparison to one of them with a
+number that looks perfectly correct. A bare number keeps its own refusal --
+it is a reference missing the one thing that cannot be guessed, not a title.
+
 ### Also
 
 - `trim` no longer accepts negative numbers. `clip[-5:]` is valid Python and
