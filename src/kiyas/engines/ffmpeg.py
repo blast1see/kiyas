@@ -25,12 +25,14 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable, Mapping
 from fractions import Fraction
+from functools import lru_cache
 from pathlib import Path
 
+from .. import assets
 from ..config import Source, Tonemap
 from ..media import binaries
 from ..media.probe import HdrFormat, VideoInfo, probe
-from .base import ACTIVE_AREA, LUMA_SAMPLE, EngineError, RenderSettings
+from .base import ACTIVE_AREA, LUMA_SAMPLE, EngineError, RenderSettings, label_for
 
 #: Decoding a single frame from a keyframe boundary; a slow disk and a long GOP
 #: can make this take a while, but not this long.
@@ -63,6 +65,61 @@ _TONEMAP_CHAIN = (
 )
 
 
+#: Label height as a share of the frame height, with a floor in pixels.
+#:
+#: Not a fixed point size, for the same reason no threshold in this project is
+#: fixed: the test clips here are 320x180 and the material is 3840x2160, an
+#: order of magnitude apart, and a size legible on one is either unreadable or
+#: a quarter of the picture on the other.
+_LABEL_SHARE = 0.022
+_LABEL_MIN_SIZE = 11
+_LABEL_MARGIN_SHARE = 0.012
+_LABEL_MARGIN_MIN = 6
+
+
+@lru_cache(maxsize=4)
+def _has_drawtext(ffmpeg: Path) -> bool:
+    """Whether this ffmpeg build has the drawtext filter compiled in.
+
+    It needs libfreetype at build time, and the minimal builds some package
+    managers ship do not have it -- the same class of gap as the essentials
+    build having no zscale, which CI already has to work around. Asked once per
+    binary because the answer cannot change while the process runs, and the
+    alternative is one extra launch per source.
+    """
+    try:
+        proc = subprocess.run(  # noqa: S603
+            [str(ffmpeg), "-hide_banner", "-filters"],
+            capture_output=True,
+            text=True,
+            timeout=_FRAME_TIMEOUT,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return " drawtext " in (proc.stdout or "")
+
+
+def _escape_filter_path(path: Path) -> str:
+    """A filesystem path as a filter option value.
+
+    A Windows drive letter is the problem: ``C:/Users/...`` puts a colon where
+    the filtergraph expects the next option to start.
+
+    The colon needs **two** backslashes, not one. Measured against ffmpeg
+    2026-08 with the argument passed directly to the process, no shell
+    involved: ``C\\:/path`` is rejected with "No option name near
+    '/Users/...'", because one backslash is consumed by the option-value parser
+    and the colon then reaches the filtergraph splitter unprotected.
+    ``C\\\\:/path`` survives both. Backslashes become forward slashes first, so
+    the only backslashes left are the ones put there on purpose.
+    """
+    return str(path).replace("\\", "/").replace(":", "\\\\:")
+
+
 class FfmpegSource:
     def __init__(
         self,
@@ -72,6 +129,8 @@ class FfmpegSource:
         ffprobe: Path,
         filters: list[str],
         target_fps: Fraction | None,
+        label: str | None = None,
+        font: Path | None = None,
     ):
         self.name = source.name
         self.info = info
@@ -80,6 +139,8 @@ class FfmpegSource:
         self._ffmpeg = ffmpeg
         self._ffprobe = ffprobe
         self._filters = filters
+        self._label = label
+        self._font = font
         self._pict_cache: dict[int, str] = {}
         self._scanned: list[tuple[int, int]] = []
         self._pict_types_usable: bool | None = None
@@ -134,17 +195,78 @@ class FfmpegSource:
 
     @property
     def has_overlay(self) -> bool:
-        """Always False.
+        """Whether the label was actually burnt in.
 
-        Burning the source name in would need ffmpeg's drawtext filter, which
-        needs a font file path. There is no portable way to name one across
-        Windows, Linux and macOS, and this is not theoretical: drawtext with no
-        explicit font crashed outright -- an access violation, not an error
-        message -- on the development machine. A comparison where the label
-        silently failed to render on one machine is worse than one with no
-        labels at all, so the orchestrator reports the difference instead.
+        Not a constant. The label is drawn with ffmpeg's drawtext, which needs
+        a font file by path -- there is no portable one, and calling it without
+        an explicit font crashed outright, with an access violation rather than
+        an error message, on the development machine. kiyas ships a font for
+        that reason, so this is normally true; it is false when that font is
+        missing from the install, or when the ffmpeg build has no drawtext
+        filter compiled in. Both cases produce an unlabelled comparison, which
+        the orchestrator reports rather than shipping a mixed set.
         """
-        return False
+        return self._label is not None and self._font is not None
+
+    def _label_lines(self, frame: int) -> str:
+        """The three things the label says, in the order FrameInfo says them.
+
+        Same information as the VapourSynth engine's overlay so a comparison
+        reads the same whichever engine produced it. The totals will not always
+        agree: VapourSynth knows the exact frame count and this engine has
+        duration times frame rate minus a safety margin, measured 125 frames
+        high on a retail remux. That difference is a property of the engines
+        and the label is simply the first place it becomes visible.
+        """
+        pict = self.picture_type(frame) if self.supports_frame_types else None
+        return "\n".join(
+            [
+                f"Frame {frame} of {self.frame_count}",
+                f"Picture type: {pict or 'N/A'}",
+                "",
+                "",
+                self._label or "",
+            ]
+        )
+
+    def _drawtext(self, textfile: Path) -> str:
+        """The drawtext filter reading its text from ``textfile``.
+
+        The text goes through a file rather than the ``text=`` option because
+        the option cannot be escaped reliably. Three parsers read it in turn --
+        the filtergraph splitter, the option-value parser and drawtext's own
+        expansion -- and they do not agree with each other. Measured against
+        ffmpeg 2026-08, one character at a time, with the argument passed
+        straight to the process and no shell involved:
+
+            ':' needs two backslashes, ',[];' need one, and an apostrophe
+            cannot be made to work at all once any escaped colon follows it --
+            "Director's Cut" plus "Picture type: B" in the same label is
+            rejected however either one is escaped.
+
+        Since a source name is free text -- "Director's Cut", "100% grade",
+        "hibrit (DV P7 FEL + HDR10+)" -- a scheme with a known unfixable case
+        is not a scheme. A file has no such rules, and ``textfile`` is what the
+        filter offers for exactly this. Only its path needs escaping.
+
+        ``expansion=none`` because kiyas writes the whole string itself: with
+        expansion on, a '%' in a release name starts a directive.
+        """
+        height = self.info.height or 1080
+        size = max(_LABEL_MIN_SIZE, int(height * _LABEL_SHARE))
+        margin = max(_LABEL_MARGIN_MIN, int(height * _LABEL_MARGIN_SHARE))
+        options = [
+            f"fontfile={_escape_filter_path(self._font)}",
+            f"textfile={_escape_filter_path(textfile)}",
+            f"fontsize={size}",
+            "fontcolor=white",
+            "borderw=1",
+            "bordercolor=black",
+            f"x={margin}",
+            f"y={margin}",
+            "expansion=none",
+        ]
+        return "drawtext=" + ":".join(options)
 
     def _scan_pict_types(self, frame: int, span_seconds: float = 4.0) -> None:
         """Read picture types for a window of frames around ``frame``.
@@ -300,8 +422,17 @@ class FfmpegSource:
                 "-i", str(self._source.path),
                 "-frames:v", "1",
             ]  # fmt: skip
-            if self._filters:
-                args += ["-vf", ",".join(self._filters)]
+            # The label goes on last, after the tonemap chain, matching where
+            # FrameInfo sits in the VapourSynth chain. Drawn before a tonemap
+            # it would be tone mapped along with the picture.
+            filters = list(self._filters)
+            label_file = None
+            if self.has_overlay:
+                label_file = directory / f".kiyas-label-{frame:06d}.txt"
+                label_file.write_text(self._label_lines(frame), encoding="utf-8")
+                filters.append(self._drawtext(label_file))
+            if filters:
+                args += ["-vf", ",".join(filters)]
             args += ["-pix_fmt", "rgb24", str(path)]
 
             try:
@@ -317,6 +448,9 @@ class FfmpegSource:
                 )
             except subprocess.TimeoutExpired as exc:
                 raise EngineError(f"{self.name}: timed out writing frame {frame}") from exc
+
+            if label_file is not None:
+                label_file.unlink(missing_ok=True)
 
             if proc.returncode != 0 or not path.is_file():
                 detail = (proc.stderr or "").strip().splitlines()
@@ -412,4 +546,26 @@ class FfmpegEngine:
                 f"{source.name}: luma_fix is only implemented in the VapourSynth engine."
             )
 
-        return FfmpegSource(source, info, ffmpeg, ffprobe, filters, target_fps)
+        label = font = None
+        if overlay:
+            font = assets.label_font()
+            if font is None:
+                prepared_notes = (
+                    "no label was burnt in: the bundled font is missing from this install"
+                )
+            elif not _has_drawtext(ffmpeg):
+                font = None
+                prepared_notes = (
+                    "no label was burnt in: this ffmpeg build has no drawtext filter, "
+                    "which needs libfreetype"
+                )
+            else:
+                prepared_notes = None
+                label = label_for(source, mode)
+        else:
+            prepared_notes = None
+
+        prepared = FfmpegSource(source, info, ffmpeg, ffprobe, filters, target_fps, label, font)
+        if prepared_notes:
+            prepared.assumptions.append(prepared_notes)
+        return prepared

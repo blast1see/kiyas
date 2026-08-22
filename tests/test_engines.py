@@ -497,10 +497,37 @@ def test_ffmpeg_refuses_hdr10_plus(clips):
 
 @pytest.mark.integration
 def test_engines_report_whether_they_labelled_the_frame(engine, clips):
-    """A comparison with half its sources labelled is worse than none."""
+    """A comparison with half its sources labelled is worse than none.
+
+    Both engines label now. This used to assert that only VapourSynth did,
+    because ffmpeg's drawtext needs a font by path and there is no portable
+    one; kiyas ships a font, so the gap is closed rather than the rule
+    relaxed. It can still come back false -- an install missing the font, or
+    an ffmpeg built without drawtext -- which is what the property is for.
+    """
     prepared = engine.prepare(_source(path=clips["sdr"], name="SDR"), overlay=True)
 
-    assert prepared.has_overlay is (engine.name == "vapoursynth")
+    assert prepared.has_overlay is True
+
+
+@pytest.mark.integration
+def test_a_name_full_of_filter_metacharacters_still_renders(engine, clips, tmp_path):
+    """Release names are free text and ffmpeg's filtergraph is not.
+
+    Every character in this name breaks a different one of the three parsers
+    a drawtext option passes through, and the apostrophe combined with the
+    colon in "Picture type:" has no working escape at all -- which is why the
+    text travels in a file instead. If that ever regresses, ffmpeg fails
+    outright rather than drawing something slightly wrong, so a rendered frame
+    is the whole assertion.
+    """
+    name = "Director's Cut 100% [a, b]; c \\ d (DV: FEL)"
+    prepared = engine.prepare(_source(path=clips["sdr"], name=name), overlay=True)
+
+    written = prepared.write_frames([5], tmp_path / "shots")
+
+    assert len(written) == 1
+    assert written[0].stat().st_size > 0
 
 
 @pytest.mark.integration

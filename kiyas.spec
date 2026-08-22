@@ -21,6 +21,11 @@ from pathlib import Path
 BLOCK_CIPHER = None
 ROOT = Path(SPECPATH)
 
+# The label font. ffmpeg's drawtext needs a font by path and there is no
+# portable one, so kiyas carries its own -- and a frozen build that leaves it
+# behind produces unlabelled screenshots with nothing to explain why.
+_ASSETS = [(str(ROOT / "src" / "kiyas" / "assets"), str(Path("kiyas") / "assets"))]
+
 #: Things a frozen build must not drag in.
 EXCLUDES = [
     # Not shippable; see above.
@@ -48,7 +53,7 @@ analysis = Analysis(
     [str(ROOT / "packaging" / "entry_cli.py")],
     pathex=[str(ROOT / "src")],
     binaries=[],
-    datas=[],
+    datas=_ASSETS,
     hiddenimports=["kiyas.gui", "kiyas.gui.window", "kiyas.audio"],
     hookspath=[],
     runtime_hooks=[],
@@ -60,7 +65,7 @@ gui_analysis = Analysis(
     [str(ROOT / "packaging" / "entry_gui.py")],
     pathex=[str(ROOT / "src")],
     binaries=[],
-    datas=[],
+    datas=_ASSETS,
     hiddenimports=["kiyas.gui", "kiyas.gui.window", "kiyas.audio"],
     hookspath=[],
     runtime_hooks=[],

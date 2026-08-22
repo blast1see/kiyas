@@ -19,7 +19,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ..config import Source
+from ..config import Source, Tonemap
 
 #: Mean luma below which a frame is treated as too dark to be worth comparing.
 #:
@@ -54,6 +54,29 @@ ACTIVE_AREA = 0.6
 #: things. Measured on a real remux before this was shared: opposite verdicts
 #: on two frames out of six.
 LUMA_SAMPLE = (64, 36)
+
+
+def label_for(source: Source, mode: Tonemap, *, baked_el: bool = False) -> str:
+    """The text burnt into a captured frame, worded once for every engine.
+
+    Here rather than in an engine for the same reason :data:`ACTIVE_AREA` is
+    here. The label is what somebody reading a published comparison has instead
+    of the project file, so two engines wording it differently produce a grid
+    whose columns say different kinds of thing about the same processing.
+
+    Everything appended after the name is something done to the picture that
+    the picture cannot show on its own. A viewer can see that a shot is dark;
+    they cannot see that it was tone mapped from Dolby Vision rather than
+    HDR10, or that an enhancement layer was composed into it.
+    """
+    parts: list[str] = []
+    if mode is not Tonemap.NONE:
+        parts.append(f"tonemapped {mode.value}")
+    if baked_el:
+        parts.append("EL baked")
+    if source.luma_fix:
+        parts.append("luma adjusted")
+    return f"{source.name} ({', '.join(parts)})" if parts else source.name
 
 
 class EngineError(RuntimeError):
