@@ -46,6 +46,7 @@ from collections.abc import Mapping, Sequence
 from fractions import Fraction
 from pathlib import Path
 
+from ..media.binaries import no_window_flag
 from .ipc import IpcError, MpvIpc, endpoint
 from .profile import BASE_ARGS, write_profile
 
@@ -172,6 +173,12 @@ class MpvSession:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                # PATHEXT puts .com ahead of .exe, so on Windows this resolves
+                # to mpv.com -- a console wrapper that puts up a console of its
+                # own. Measured from a real windowed process: without this flag
+                # a visible console appears per launch, and a settings
+                # comparison launches one mpv per variant.
+                creationflags=no_window_flag(),
             )
         except OSError as exc:
             raise SessionError(f"could not start mpv: {exc}") from exc
