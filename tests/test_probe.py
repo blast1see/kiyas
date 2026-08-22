@@ -131,6 +131,77 @@ def test_no_side_data_means_no_dovi():
     assert probe._dovi_profile({"side_data_list": []}) is None
 
 
+# --------------------------------------------------------------------------
+# Dolby Vision enhancement layers
+#
+# Both payloads below were copied out of ffprobe rather than written by hand,
+# from two releases of the same 2026 film: a UHD disc remux and an iTunes
+# WEB-DL hybrid. A configuration record invented from the documentation would
+# agree with whatever this module happened to do.
+# --------------------------------------------------------------------------
+
+PROFILE_7_REMUX = {
+    "side_data_list": [
+        {
+            "side_data_type": "DOVI configuration record",
+            "dv_version_major": 1,
+            "dv_version_minor": 0,
+            "dv_profile": 7,
+            "dv_level": 6,
+            "rpu_present_flag": 1,
+            "el_present_flag": 1,
+            "bl_present_flag": 1,
+            "dv_bl_signal_compatibility_id": 6,
+            "dv_md_compression": "none",
+        }
+    ]
+}
+
+PROFILE_8_WEB_DL = {
+    "side_data_list": [
+        {
+            "side_data_type": "DOVI configuration record",
+            "dv_version_major": 1,
+            "dv_version_minor": 0,
+            "dv_profile": 8,
+            "dv_level": 6,
+            "rpu_present_flag": 1,
+            "el_present_flag": 0,
+            "bl_present_flag": 1,
+            "dv_bl_signal_compatibility_id": 1,
+            "dv_md_compression": "none",
+        }
+    ]
+}
+
+
+def test_a_profile_7_remux_reports_an_enhancement_layer():
+    assert probe._dovi_el_present(PROFILE_7_REMUX) is True
+
+
+def test_a_profile_8_hybrid_reports_no_enhancement_layer():
+    """The flag is what separates the two, not the profile on its own."""
+    assert probe._dovi_el_present(PROFILE_8_WEB_DL) is False
+
+
+def test_a_file_with_no_dolby_vision_has_no_enhancement_layer():
+    assert probe._dovi_el_present({}) is False
+    assert probe._dovi_el_present({"side_data_list": []}) is False
+
+
+def test_only_profile_7_counts_as_dual_layer():
+    """Profile 8 with a stray el_present_flag is still a single-layer file.
+
+    Asking for both keeps a mis-tagged file from sending the engine off to
+    demux a layer that is not there, which costs a full read of the source
+    before it can fail.
+    """
+    assert _info(dovi_profile=7, dovi_el_present=True).has_enhancement_layer is True
+    assert _info(dovi_profile=8, dovi_el_present=True).has_enhancement_layer is False
+    assert _info(dovi_profile=7, dovi_el_present=False).has_enhancement_layer is False
+    assert _info(dovi_profile=None).has_enhancement_layer is False
+
+
 def test_missing_file_is_reported_before_spawning_ffprobe(tmp_path):
     with pytest.raises(ProbeError, match="no such file"):
         probe.probe(tmp_path / "nope.mkv")
