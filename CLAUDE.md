@@ -182,6 +182,28 @@ against real material: feature-length remuxes, kept outside this repository
 because they are tens of gigabytes each. Any varied set will do; what the set
 has to be is varied, for the reason below.
 
+**A windowed build is a different program, and there is a script for it.**
+Five of the last eight releases fixed something invisible from a terminal and
+from the suite: a relative path resolved against the wrong directory, a frozen
+build told to run pip, an engine offered that the machine cannot run,
+`sys.stderr.flush()` on a stream that is None, and a console window per
+subprocess. The cause is shared -- a GUI entry point has no console, so Python
+leaves `sys.stdout` and `sys.stderr` unset and every console child makes its
+own console.
+
+None of that reproduces under pytest, under a terminal, or under `pythonw`
+started from a shell: a shell hands its own handles down, so even that looks
+like a console session. Explorer starting a shortcut is the real thing.
+
+```bash
+python packaging/windowed_check.py project.toml [--engine ffmpeg]
+```
+
+It runs the comparison with no console, counts console windows against a
+baseline while it goes, and refuses to report anything unless `sys.stderr` was
+actually None -- a check that passes in the wrong process proves nothing. Run
+it before tagging. It needs real media, so it is not in CI.
+
 **Nine real files, deliberately unalike, are the sweep that finds this class
 of bug.** A Dolby Vision profile 7 remux, a profile 8 hybrid, a 4K WEB-DL with
 DV, four 1080p AVC remuxes, a WEB-DL with no B-frames, and an anime episode.
