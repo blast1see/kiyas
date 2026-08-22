@@ -73,6 +73,23 @@ MAX_USEFUL_DEPTH = 24
 _DECODE_TIMEOUT = 3600.0
 
 
+def _missing_libraries_message() -> str:
+    """What to do about missing audio libraries, in this build.
+
+    The packaged build has no pip and no interpreter to point one at, so
+    telling it to `pip install` is an instruction it cannot follow -- the same
+    rule the VapourSynth hint follows, for the same reason.
+    """
+    from ..setup_env import is_frozen
+
+    if is_frozen():
+        return (
+            "audio analysis needs numpy and scipy, which the packaged build does not carry. "
+            "Use a checkout: run bootstrap.ps1, or 'pip install kiyas[audio]' in an environment."
+        )
+    return "audio analysis needs numpy and scipy. Run 'pip install kiyas[audio]'."
+
+
 class AnalysisError(RuntimeError):
     """Raised when a track cannot be analysed."""
 
@@ -197,9 +214,7 @@ def analyse(
         import numpy as np
         from scipy import signal
     except ImportError as exc:  # pragma: no cover - depends on the environment
-        raise AnalysisError(
-            "audio analysis needs numpy and scipy. Run 'pip install kiyas[audio]'."
-        ) from exc
+        raise AnalysisError(_missing_libraries_message()) from exc
 
     binary = binaries.require_binary("ffmpeg", ffmpeg)
     channels = track.channels

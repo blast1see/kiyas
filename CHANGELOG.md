@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.8
+
+### The packaged build stops giving instructions it cannot follow
+
+`kiyas audio` in a packaged build answered "Run 'pip install kiyas[audio]'",
+and `doctor` printed the same line beside numpy, scipy and matplotlib. A frozen
+build has no pip and no interpreter to point one at, so that is an instruction
+it cannot follow — the rule `kiyas setup` has followed since it existed, in a
+different table.
+
+Both now say what is actually possible: use a checkout.
+
+The libraries are not bundled instead, and the numbers are why: they come to
+180 MB against a 58 MB package, and being the small download is the whole
+argument for the packaged build. The README now says audio needs a checkout
+rather than leaving it to be discovered.
+
 ## 0.1.7
 
 ### The window puts screenshots where you would look for them
