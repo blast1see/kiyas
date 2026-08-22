@@ -151,7 +151,7 @@ def probe_version(path: Path, name: str | None = None) -> str | None:
             encoding="utf-8",
             errors="replace",
             stdin=subprocess.DEVNULL,
-            creationflags=_no_window_flag(),
+            creationflags=no_window_flag(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -161,8 +161,21 @@ def probe_version(path: Path, name: str | None = None) -> str | None:
     return first[0].strip() if first else None
 
 
-def _no_window_flag() -> int:
-    """Keep console windows from flashing when the GUI shells out."""
+def no_window_flag() -> int:
+    """Keep console windows from appearing when the GUI shells out.
+
+    Which children need this was measured from a real windowed process rather
+    than assumed, because the answer is not "all of them": launched with every
+    standard handle redirected, ffmpeg gets no window with or without the flag.
+    ``mpv.com`` does -- it is a console *wrapper*, shipped so that the GUI
+    build has somewhere to write, and it puts up a visible console of its own.
+    So a settings comparison run from kiyas-gui.exe opened one black window per
+    variant until this was passed.
+
+    Do not sprinkle it over the other subprocess calls on the strength of that:
+    the ones that were measured do not need it, and a flag applied everywhere
+    stops recording which case it was for.
+    """
     if sys.platform == "win32":
         return getattr(subprocess, "CREATE_NO_WINDOW", 0)
     return 0

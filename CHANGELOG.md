@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.13
+
+### mpv no longer opens a console window per column
+
+Running a settings comparison from `kiyas-gui.exe` put up a black console
+window for every variant it rendered.
+
+`PATHEXT` places `.com` ahead of `.exe`, so on Windows `mpv` resolves to
+`mpv.com` — a console *wrapper*, shipped so that the GUI build has somewhere to
+write. Launched from a process that has no console of its own, it makes one.
+
+Measured from a real windowed process rather than reasoned about, because the
+answer is not the same for every child: launched with all three standard
+handles redirected, ffmpeg gets no window with or without `CREATE_NO_WINDOW`.
+`mpv.com` owned a visible console without the flag and none with it. So the
+flag went where it was measured to matter, and the note next to it says the
+others were checked and do not need it.
+
 ## 0.1.12
 
 ### The size warning now says which crop to use

@@ -225,6 +225,16 @@ because a tone curve is monotonic: it moves every value and reorders none.
   subprocess call to mpv needs an explicit timeout and, where relevant,
   `--keep-open=no`. `_PROBE_TIMEOUT` in `binaries.py` exists because of this.
 
+- **`mpv` on the PATH is `mpv.com`, not `mpv.exe`, and it makes its own
+  console.** `PATHEXT` puts `.com` first, and mpv ships both: the `.com` is a
+  console wrapper so the GUI build has somewhere to write. Launched from a
+  windowed process it puts up a visible console -- one per variant of a
+  settings comparison. `MpvSession` passes `CREATE_NO_WINDOW`. Which children
+  need that was measured, not assumed: with every standard handle redirected,
+  ffmpeg gets no window either way, so the flag is not sprinkled over the other
+  subprocess calls. A flag applied everywhere stops recording which case it was
+  for.
+
 - **PowerShell's `-match` on an array filters instead of returning a boolean.**
   `if ($lines -notmatch "x")` is truthy whenever *any* line does not match,
   which silently passes. `bootstrap.ps1` joins to a single string first.

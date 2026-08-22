@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import ast
 import json
+import subprocess
+import sys
 from fractions import Fraction
 from pathlib import Path
 
 import pytest
 
+from kiyas.media import binaries
 from kiyas.mpvctl import picker, profile, variants
 from kiyas.mpvctl.ipc import IpcError, MpvIpc
 from kiyas.mpvctl.session import build_args
@@ -673,3 +676,44 @@ def test_the_picker_can_open_at_a_frame(monkeypatch):
     _, session = run_picker(monkeypatch, [{"event": "shutdown"}], start_frame=48)
 
     assert session.sought == pytest.approx(2.0)
+
+
+def test_mpv_is_launched_without_a_console_of_its_own():
+    """PATHEXT puts .com ahead of .exe, so on Windows this resolves to mpv.com.
+
+    That is a console *wrapper*, shipped so the GUI build has somewhere to
+    write, and it puts up a visible console of its own. Measured from a real
+    windowed process, the parent having no console and sys.stderr set to None:
+    without CREATE_NO_WINDOW the child owned a visible PseudoConsoleWindow;
+    with it, no window at all. A settings comparison launches one mpv per
+    variant, so that was one black window per column of the comparison.
+
+    The launch itself is not exercised anywhere -- the session tests build the
+    object with __new__ and hand it a fake IPC -- so this reads the source, the
+    way the guard above it does.
+    """
+    source = Path(__file__).resolve().parent.parent / "src" / "kiyas" / "mpvctl" / "session.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+
+    launches = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and ast.unparse(node.func).endswith("subprocess.Popen")
+    ]
+
+    assert launches, "MpvSession no longer starts a process; this guard needs rewriting"
+    for call in launches:
+        passed = {keyword.arg for keyword in call.keywords}
+        assert "creationflags" in passed, (
+            f"the mpv launched at session.py:{call.lineno} can open a console window"
+        )
+
+
+def test_the_no_window_flag_is_only_a_flag_on_windows():
+    """Elsewhere it has to be 0 rather than absent, since it is always passed."""
+    flag = binaries.no_window_flag()
+
+    if sys.platform == "win32":
+        assert flag == subprocess.CREATE_NO_WINDOW
+    else:
+        assert flag == 0
