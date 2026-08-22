@@ -357,6 +357,17 @@ because a tone curve is monotonic: it moves every value and reorders none.
   confidence comes from the wide search, because "is this peak distinctive
   against the rest of the film" is a question a narrow window cannot answer.
 
+- **ffmpeg's default pacing silently rewrites a run of frames.** Asking for
+  N consecutive frames and getting N frames back does not mean they are the
+  ones asked for: without `-fps_mode passthrough` ffmpeg fits the output to a
+  constant frame rate by duplicating and dropping, and the result still looks
+  contiguous. Measured on a 24fps clip with no filter doing anything unusual:
+  one duplicate near the start put **45 of 48** thumbnails one frame late, and
+  `default[24]` was `passthrough[23]`. In an alignment that is a systematic
+  one-frame bias in every number the module produces. It cancels when both
+  sources are affected identically, which is exactly why it would have
+  survived a test that only checked the answer.
+
 - **The audio module's peak-to-floor confidence does not transfer to
   pictures.** It was the obvious thing to reuse -- the two measurements answer
   the same question -- and it is worthless here. Its value tracks how
