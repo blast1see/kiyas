@@ -10,6 +10,11 @@ drawtext needs one by path and there is no portable path -- so an install that
 loses it, or a frozen build that leaves it behind, produces a comparison with
 no labels and nothing to explain why. That is worth an assertion rather than a
 discovery.
+
+Nothing here tests escaping a path into a filter option, because nothing does
+that any more: the font and the label text are copied into a directory kiyas
+names and referenced by bare filenames. An escaper still standing would read
+as protection, and the thing it protected against is now unreachable.
 """
 
 from __future__ import annotations
@@ -21,12 +26,7 @@ import pytest
 from kiyas import assets
 from kiyas.config import Source, Tonemap
 from kiyas.engines.base import label_for
-from kiyas.engines.ffmpeg import (
-    _LABEL_MARGIN_MIN,
-    _LABEL_MIN_SIZE,
-    _LABEL_SHARE,
-    _escape_filter_path,
-)
+from kiyas.engines.ffmpeg import _LABEL_MARGIN_MIN, _LABEL_MIN_SIZE, _LABEL_SHARE
 
 
 def _source(**overrides) -> Source:
@@ -89,32 +89,6 @@ def test_the_font_licence_travels_with_it():
 
     assert font is not None
     assert (font.parent / "DejaVuSans.LICENSE").is_file()
-
-
-# --------------------------------------------------------------------------
-# Getting a path past ffmpeg's filtergraph parser
-# --------------------------------------------------------------------------
-
-
-def test_a_windows_drive_letter_is_escaped_for_the_filtergraph():
-    """``C:/...`` puts a colon where the parser expects the next option.
-
-    Two backslashes, not one: one is eaten by the option-value parser and the
-    colon then reaches the filtergraph splitter unprotected. Measured against
-    ffmpeg 2026-08 -- the single-backslash form is rejected with "No option
-    name near '/Users/...'".
-    """
-    escaped = _escape_filter_path(Path("C:/Users/Mert/font.ttf"))
-
-    assert escaped == "C\\\\:/Users/Mert/font.ttf"
-
-
-def test_backslashes_become_forward_slashes_first():
-    """So the only backslashes left in the value are the deliberate ones."""
-    escaped = _escape_filter_path(Path(r"C:\Users\Mert\font.ttf"))
-
-    assert "\\\\:" in escaped
-    assert escaped.count("\\") == 2
 
 
 # --------------------------------------------------------------------------
