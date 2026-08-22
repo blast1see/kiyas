@@ -416,6 +416,29 @@ def test_luma_thumbnails_and_mean_luma_agree(shifted_clips):
 
 
 @pytest.mark.integration
+def test_a_run_of_thumbnails_is_actually_consecutive(shifted_clips):
+    """Asked for a run, the engine has to hand back that run.
+
+    ffmpeg's default pacing rewrites the output to a constant frame rate,
+    duplicating and dropping frames to fit, and the result still looks like a
+    contiguous run. Measured before this was fixed: one duplicate near the
+    start put 45 of 48 thumbnails one frame late, which is a systematic
+    one-frame bias in every offset the module would go on to measure.
+
+    Fetching them one at a time cannot drift, so it is the reference.
+    """
+    from kiyas.config import Source
+    from kiyas.engines.ffmpeg import FfmpegEngine
+
+    prepared = FfmpegEngine().prepare(Source(path=shifted_clips["a"], name="A"), overlay=False)
+
+    run = prepared.luma_thumbnails(100, 8)
+    one_at_a_time = [prepared.luma_thumbnails(100 + index, 1)[0] for index in range(8)]
+
+    assert run == one_at_a_time
+
+
+@pytest.mark.integration
 def test_a_stride_returns_every_nth_thumbnail(shifted_clips):
     """The coarse pass depends on this, and it is the only place it is used."""
     from kiyas.config import Source

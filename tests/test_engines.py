@@ -505,6 +505,9 @@ def test_engines_report_whether_they_labelled_the_frame(engine, clips):
     relaxed. It can still come back false -- an install missing the font, or
     an ffmpeg built without drawtext -- which is what the property is for.
     """
+    if engine.name == "ffmpeg" and not _has_filter("drawtext"):
+        pytest.skip("this ffmpeg was built without drawtext; doctor reports that too")
+
     prepared = engine.prepare(_source(path=clips["sdr"], name="SDR"), overlay=True)
 
     assert prepared.has_overlay is True
@@ -521,6 +524,9 @@ def test_a_name_full_of_filter_metacharacters_still_renders(engine, clips, tmp_p
     outright rather than drawing something slightly wrong, so a rendered frame
     is the whole assertion.
     """
+    if engine.name == "ffmpeg" and not _has_filter("drawtext"):
+        pytest.skip("this ffmpeg was built without drawtext; doctor reports that too")
+
     name = "Director's Cut 100% [a, b]; c \\ d (DV: FEL)"
     prepared = engine.prepare(_source(path=clips["sdr"], name=name), overlay=True)
 
