@@ -221,6 +221,63 @@ def refine(
     return sorted(resolved), rejected, moved
 
 
+#: How many positions are looked at for each extreme frame asked for.
+#:
+#: Picking the darkest frame of a film means looking at frames, and looking is
+#: what costs -- one process launch each in the ffmpeg engine. Twelve
+#: candidates per pick is enough for the darkest of them to actually be a dark
+#: shot rather than the dimmest of three well-lit ones, and small enough that
+#: asking for two of each costs about the same as the ordinary selection does.
+POOL_PER_PICK = 12
+
+
+def extremes(
+    window: Window,
+    dark: int,
+    light: int,
+    brightness: Callable[[int], float],
+    *,
+    acceptable: Callable[[int], bool] | None = None,
+    avoid: set[int] | None = None,
+) -> list[int]:
+    """The darkest and brightest frames in a sample of ``window``.
+
+    Evenly spaced sampling finds the *typical* frame, which is the right
+    default and no help for the two questions people actually bring to a
+    comparison. Banding and block noise live in dark scenes; highlight rolloff
+    and specular detail live in bright ones. Neither shows up on a shot of
+    somebody talking in a lit room, and that is what even spacing mostly
+    returns.
+
+    Takes ``brightness`` rather than a clip, for the same reason :func:`refine`
+    takes a predicate: this module never decodes anything.
+
+    ``acceptable`` is the same predicate :func:`refine` uses, so a deliberately
+    dark pick still has to be a B-frame and still has to clear the
+    black-frame floor. That floor is not in tension with asking for dark
+    frames -- it is what makes the request mean something. The darkest frame
+    of a film is a fade to black, and a fade compares nothing at all.
+    """
+    if dark <= 0 and light <= 0:
+        return []
+
+    picks = dark + light
+    pool = _evenly_spaced(window, min(picks * POOL_PER_PICK, max(window.length, 1)))
+    seen = avoid or set()
+    scored = [
+        (brightness(frame), frame)
+        for frame in pool
+        if frame not in seen and (acceptable is None or acceptable(frame))
+    ]
+    if not scored:
+        return []
+
+    scored.sort()
+    chosen = {frame for _, frame in scored[:dark]}
+    chosen.update(frame for _, frame in scored[len(scored) - light :] if light > 0)
+    return sorted(chosen)
+
+
 def describe(frames: list[int], fps: Fraction) -> list[str]:
     """Human-readable timestamps, for logs and for the frame list on disk."""
     out = []

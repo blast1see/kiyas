@@ -291,6 +291,8 @@ class FrameSelection:
     skip_end: float = 0.10
     b_frames_only: bool = True
     skip_dark: bool = True
+    dark: int = 0
+    light: int = 0
     seed: int | None = None
 
     _KEYS = {
@@ -302,6 +304,8 @@ class FrameSelection:
         "skip_end",
         "b_frames_only",
         "skip_dark",
+        "dark",
+        "light",
         "seed",
     }
 
@@ -340,6 +344,10 @@ class FrameSelection:
             selection.b_frames_only = _bool(table["b_frames_only"], where, "b_frames_only")
         if "skip_dark" in table:
             selection.skip_dark = _bool(table["skip_dark"], where, "skip_dark")
+        if "dark" in table:
+            selection.dark = _int(table["dark"], where, "dark", minimum=0)
+        if "light" in table:
+            selection.light = _int(table["light"], where, "light", minimum=0)
         if "seed" in table:
             selection.seed = _int(table["seed"], where, "seed")
 
@@ -671,6 +679,10 @@ def dumps(project: Project) -> str:
     lines.append(f"skip_end = {_percent(frames.skip_end)}")
     lines.append(f"b_frames_only = {str(frames.b_frames_only).lower()}")
     lines.append(f"skip_dark = {str(frames.skip_dark).lower()}")
+    if frames.dark:
+        lines.append(f"dark = {frames.dark}")
+    if frames.light:
+        lines.append(f"light = {frames.light}")
     if frames.seed is not None:
         lines.append(f"seed = {frames.seed}")
     lines.append("")

@@ -320,3 +320,85 @@ def test_describe_renders_timestamps():
     assert selector.describe([0], Fraction(24)) == ["0 (0:00:00)"]
     assert selector.describe([24 * 65], Fraction(24)) == ["1560 (0:01:05)"]
     assert selector.describe([24 * 3725], Fraction(24)) == ["89400 (1:02:05)"]
+
+
+# ---------------------------------------------------------------- extremes --
+
+
+def _brightness(pattern: dict[int, float]):
+    """A luma callable: named frames get their value, everything else 0.5."""
+    return lambda frame: pattern.get(frame, 0.5)
+
+
+def test_asking_for_nothing_looks_at_nothing():
+    """The pool costs a decode per candidate, so it must not be built unasked."""
+    looked: list[int] = []
+
+    picked = selector.extremes(
+        selector.Window(0, TOTAL), 0, 0, lambda frame: looked.append(frame) or 0.5
+    )
+
+    assert picked == []
+    assert looked == []
+
+
+def test_the_darkest_sampled_frame_is_picked():
+    window = selector.Window(0, 10_000)
+    pool = selector._evenly_spaced(window, selector.POOL_PER_PICK)
+
+    picked = selector.extremes(window, 1, 0, _brightness({pool[3]: 0.02}))
+
+    assert picked == [pool[3]]
+
+
+def test_the_brightest_sampled_frame_is_picked():
+    window = selector.Window(0, 10_000)
+    pool = selector._evenly_spaced(window, selector.POOL_PER_PICK)
+
+    picked = selector.extremes(window, 0, 1, _brightness({pool[7]: 0.99}))
+
+    assert picked == [pool[7]]
+
+
+def test_both_ends_come_back_together():
+    window = selector.Window(0, 10_000)
+    pool = selector._evenly_spaced(window, 2 * selector.POOL_PER_PICK)
+
+    picked = selector.extremes(window, 1, 1, _brightness({pool[2]: 0.01, pool[9]: 0.99}))
+
+    assert picked == sorted([pool[2], pool[9]])
+
+
+def test_a_frame_already_chosen_is_not_chosen_twice():
+    """The extremes are added to the evenly spaced set, not merged into it."""
+    window = selector.Window(0, 10_000)
+    pool = selector._evenly_spaced(window, selector.POOL_PER_PICK)
+
+    picked = selector.extremes(
+        window, 1, 0, _brightness({pool[0]: 0.01, pool[1]: 0.02}), avoid={pool[0]}
+    )
+
+    assert picked == [pool[1]]
+
+
+def test_the_black_frame_floor_still_applies():
+    """A fade to black is the darkest frame of most films and compares nothing.
+
+    `skip_dark` is not in tension with asking for dark frames; it is what makes
+    the request mean something, so the same predicate gates both.
+    """
+    window = selector.Window(0, 10_000)
+    pool = selector._evenly_spaced(window, selector.POOL_PER_PICK)
+    luma = _brightness({pool[0]: 0.001, pool[4]: 0.05})
+
+    picked = selector.extremes(window, 1, 0, luma, acceptable=lambda frame: luma(frame) >= 0.01)
+
+    assert picked == [pool[4]]
+
+
+def test_nothing_acceptable_returns_nothing_rather_than_a_bad_frame():
+    picked = selector.extremes(
+        selector.Window(0, 10_000), 2, 2, _brightness({}), acceptable=lambda _frame: False
+    )
+
+    assert picked == []
