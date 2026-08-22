@@ -160,6 +160,7 @@ class VapourSynthSource:
     def __init__(self, clip, name: str, info: VideoInfo, assumptions: list[str], *, overlay: bool):
         self._clip = clip
         self._stats = None
+        self._small = None
         self._has_b_frames: bool | None = None
         self._overlay = overlay
         self.name = name
@@ -230,15 +231,41 @@ class VapourSynthSource:
         if self._stats is None:
             import vapoursynth as vs
 
-            small = vs.core.resize.Bicubic(
+            self._stats = vs.core.std.PlaneStats(self._small_clip(), plane=0)
+        return float(self._stats.get_frame(frame).props["PlaneStatsAverage"])
+
+    def _small_clip(self):
+        """The reduced grey clip both brightness and alignment read.
+
+        Built once and kept: it is a filter chain, and rebuilding it per frame
+        would throw away the cache behind it.
+        """
+        if self._small is None:
+            import vapoursynth as vs
+
+            self._small = vs.core.resize.Bicubic(
                 _active_area(self._clip),
                 width=LUMA_SAMPLE[0],
                 height=LUMA_SAMPLE[1],
                 format=vs.GRAY8,
                 range_s="full",
             )
-            self._stats = vs.core.std.PlaneStats(small, plane=0)
-        return float(self._stats.get_frame(frame).props["PlaneStatsAverage"])
+        return self._small
+
+    def luma_thumbnails(self, start: int, count: int, step: int = 1) -> list[bytes]:
+        """``count`` consecutive luma thumbnails from ``start``.
+
+        Exactly the reduction :meth:`mean_luma` averages over, so the two
+        engines are looking at the same quantity here as they are there.
+        """
+        if count <= 0 or self.frame_count <= 0:
+            return []
+        start = max(0, min(start, self.frame_count - 1))
+        count = min(count, self.frame_count - start)
+        small = self._small_clip()
+        return [
+            bytes(small.get_frame(index)[0]) for index in range(start, start + count, max(1, step))
+        ]
 
     def write_frames(self, frames: list[int], directory: Path) -> list[Path]:
         import vapoursynth as vs

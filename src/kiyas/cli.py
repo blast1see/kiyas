@@ -76,12 +76,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not burn the source name into the frame.",
     )
     run_cmd.add_argument("--output", type=Path, default=None, help="Override the output directory.")
+    run_cmd.add_argument(
+        "--check-sync",
+        action="store_true",
+        help="Also measure how far each source is from the first. Costs a second pass.",
+    )
     run_cmd.add_argument("--publish", action="store_true", help="Publish when the run finishes.")
     run_cmd.add_argument(
         "--publish-to",
         choices=("slowpics", "comppics"),
         default="slowpics",
         help="Where --publish sends the comparison. Default: slowpics.",
+    )
+
+    align_help = "Measure how far each source is from the first, in frames."
+    alignment = sub.add_parser("align", help=align_help, description=align_help)
+    alignment.add_argument("project", type=Path, help="The project file.")
+    alignment.add_argument(
+        "--samples",
+        type=int,
+        default=None,
+        help="How many positions along the film to sample. More is slower and steadier.",
     )
 
     audio_help = "Compare the audio tracks of two or more files."
@@ -237,6 +252,10 @@ def _cmd_run(args) -> int:
     for source in result.sources:
         console.print(f"  {escape(source.name)} -> {escape(str(source.directory))}")
     console.print(f"\nmanifest: {escape(str(result.manifest))}")
+
+    if args.check_sync:
+        console.print()
+        _cmd_align(args)
 
     if args.publish:
         console.print()
@@ -542,6 +561,61 @@ def _cmd_templates() -> int:
     return 0
 
 
+def _cmd_align(args) -> int:
+    from rich.console import Console
+    from rich.markup import escape
+
+    from . import config, run
+    from .frames import align
+
+    console = Console()
+    try:
+        project = config.load(args.project)
+    except config.ConfigError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        return 2
+
+    status = console.status("starting")
+    status.start()
+    try:
+        fps, results = run.align_project(
+            project,
+            # `run --check-sync` reaches this without a --samples flag of its own.
+            samples=getattr(args, "samples", None) or align.SAMPLES,
+            progress=lambda text: status.update(escape(text)),
+        )
+    except run.RunError as exc:
+        status.stop()
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        return 1
+    finally:
+        status.stop()
+
+    reference = project.sources[0]
+    console.print(f"reference: [bold]{escape(reference.name)}[/bold]\n")
+
+    for result in results:
+        colour = "yellow" if result.is_weak else "green"
+        console.print(f"[bold]{escape(result.name)}[/bold]")
+        console.print(f"  [{colour}]{escape(result.summary(fps))}[/{colour}]")
+
+    # The reference goes in with an offset of zero, because it is the source
+    # that has to move when another one turns out to play earlier: there is no
+    # negative trim to give that one instead.
+    trims = align.suggested_trims(
+        [0, *(result.frames for result in results)],
+        [source.trim for source in project.sources],
+    )
+    if any(trim != source.trim for source, trim in zip(project.sources, trims)):
+        console.print("\nPaste this into the project file:\n")
+        for source, trim in zip(project.sources, trims):
+            console.print(escape(f"[[source]]  # {source.name}"))
+            console.print(escape(f"trim = {trim}"))
+    else:
+        console.print("\n[green]every source is already in step[/green]")
+    return 0
+
+
 def _cmd_pick(args) -> int:
     import tempfile
 
@@ -655,6 +729,9 @@ def _dispatch(argv: Sequence[str] | None) -> int:
 
     if args.command == "run":
         return _cmd_run(args)
+
+    if args.command == "align":
+        return _cmd_align(args)
 
     if args.command == "audio":
         return _cmd_audio(args)
