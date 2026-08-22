@@ -327,6 +327,12 @@ class VapourSynthEngine:
             lsmas_options["cachedir"] = str(index_dir)
             bs_options["cachepath"] = str(index_dir)
 
+        # The order matters for one reason worth knowing before changing it:
+        # read out of the shipped binaries, lsmas sets `DolbyVisionRPU` but not
+        # `HDR10Plus`, while BestSource sets both. Nothing here reads
+        # `HDR10Plus` -- vs-placebo ignores it, which _apply_tonemap documents
+        # -- so today the choice costs nothing. If that ever changes, this line
+        # is what gates it.
         errors = []
         for namespace, call in (
             ("lsmas", lambda: core.lsmas.LWLibavSource(str(path), **lsmas_options)),
