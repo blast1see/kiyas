@@ -1010,3 +1010,31 @@ def test_publish_format_flag_repeats():
     )
 
     assert args.formats == ["comparison", "markdown"]
+
+
+@pytest.mark.parametrize(
+    ("value", "is_reference"),
+    [
+        ("MOVIE_1275779", True),
+        ("movie/1275779", True),
+        ("tv 1399", True),
+        ("TV-1399", True),
+        ("1275779", False),
+        ("The Prestige", False),
+        ("Dune", False),
+        ("2001", False),
+    ],
+)
+def test_a_reference_is_told_apart_from_a_title(value, is_reference):
+    """The caller has to know which it is before deciding whether to look it up.
+
+    A bare number is neither: it is a reference with the one thing missing
+    that cannot be guessed, and it keeps its own refusal rather than being
+    sent to TMDB as a search term.
+    """
+    assert slowpics.looks_like_tmdb(value) is is_reference
+
+
+def test_a_bare_number_is_still_refused_rather_than_searched_for():
+    with pytest.raises(ValueError, match="film or a series"):
+        slowpics.normalise_tmdb("1275779")
