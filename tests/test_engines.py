@@ -22,6 +22,7 @@ from kiyas.engines.base import DARK_LUMA_THRESHOLD
 from kiyas.engines.ffmpeg import FfmpegEngine
 from kiyas.media import binaries
 from kiyas.media.probe import HdrFormat, VideoInfo
+from kiyas.run import safe_directory_name
 
 
 def _info(**overrides) -> VideoInfo:
@@ -531,6 +532,28 @@ def test_a_name_full_of_filter_metacharacters_still_renders(engine, clips, tmp_p
     prepared = engine.prepare(_source(path=clips["sdr"], name=name), overlay=True)
 
     written = prepared.write_frames([5], tmp_path / "shots")
+
+    assert len(written) == 1
+    assert written[0].stat().st_size > 0
+
+
+@pytest.mark.integration
+def test_a_label_survives_an_output_directory_named_after_the_source(engine, clips, tmp_path):
+    """`run` names the output directory after the source, and names are free text.
+
+    This is the same escaping problem as the label text, arriving through the
+    *path* instead: an apostrophe, a comma or a bracket in a filter option
+    value breaks the filtergraph, and "Director's Cut" is an ordinary folder
+    to end up with. It failed with "Error opening output files", which points
+    at the output and is not where the problem was.
+    """
+    if engine.name == "ffmpeg" and not _has_filter("drawtext"):
+        pytest.skip("this ffmpeg was built without drawtext; doctor reports that too")
+
+    name = "Director's Cut, take [2] 100%"
+    prepared = engine.prepare(_source(path=clips["sdr"], name=name), overlay=True)
+
+    written = prepared.write_frames([5], tmp_path / safe_directory_name(name))
 
     assert len(written) == 1
     assert written[0].stat().st_size > 0
