@@ -588,3 +588,49 @@ def test_mean_luma_is_a_fraction(engine, clips):
     assert 0.0 <= luma <= 1.0
     # testsrc2 is a bright test pattern, not black.
     assert luma > DARK_LUMA_THRESHOLD
+
+
+# --------------------------------------------------------------------------
+# The enhancement layer, from an engine that cannot compose one
+# --------------------------------------------------------------------------
+
+
+def _dual_layer(**overrides):
+    return _info(dovi_profile=7, dovi_el_present=True, **overrides)
+
+
+def test_ffmpeg_says_it_left_the_enhancement_layer_out():
+    """Silence here is the exact failure composing it was written to end.
+
+    A profile 7 release carries half its picture in a second layer. Producing
+    base-layer screenshots and offering them as screenshots of the release is
+    what kiyas did for as long as dovi_tool sat unused, and an engine that
+    cannot compose the layer has to say so rather than repeat it quietly.
+    """
+    note = FfmpegEngine()._enhancement_note(_source(), _dual_layer())
+
+    assert note is not None
+    assert "base layer alone" in note
+    assert "VapourSynth" in note
+
+
+def test_ffmpeg_refuses_an_explicit_request_it_cannot_honour():
+    """`on` asks for a specific picture, so quietly producing another is worse
+    than refusing to produce one."""
+    from kiyas.config import DoviEl
+
+    with pytest.raises(EngineError, match="only the VapourSynth engine"):
+        FfmpegEngine()._enhancement_note(_source(dovi_el=DoviEl.ON), _dual_layer())
+
+
+@pytest.mark.parametrize("info", [_info(dovi_profile=8), _info(dovi_profile=None)])
+def test_a_single_layer_source_is_not_mentioned_at_all(info):
+    """Profile 8 has nothing to compose, so a caveat there is noise."""
+    assert FfmpegEngine()._enhancement_note(_source(), info) is None
+
+
+def test_switching_it_off_is_silence_not_a_warning():
+    """'off' means never bring it up again, not merely never do it."""
+    from kiyas.config import DoviEl
+
+    assert FfmpegEngine()._enhancement_note(_source(dovi_el=DoviEl.OFF), _dual_layer()) is None

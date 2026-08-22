@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.6
+
+### The ffmpeg engine says what it left out
+
+0.1.5 taught kiyas to compose a Dolby Vision profile 7 enhancement layer, and
+the whole point was to stop producing base-layer screenshots and offering them
+as screenshots of the release. The ffmpeg engine kept doing exactly that — it
+cannot compose the layer, and it said nothing.
+
+That is the engine the packaged build uses, since VapourSynth is deliberately
+not frozen. So the one place the old behaviour still lived was the build most
+people run. Found by comparing two profile 7 remuxes with the released
+`kiyas-gui.exe` and noticing the run had nothing to say about it.
+
+It now reports the layer the way the VapourSynth engine does, and refuses
+`dovi_el = "on"` outright rather than ignoring a request it cannot honour —
+an explicit ask for a specific picture is the worst place to quietly produce a
+different one.
+
 ## 0.1.5
 
 ### Dolby Vision profile 7 is composed instead of advertised
