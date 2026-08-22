@@ -120,6 +120,7 @@ def run_ffprobe(args: list[str], *, ffprobe: Path) -> dict:
             encoding="utf-8",
             errors="replace",
             stdin=subprocess.DEVNULL,
+            creationflags=binaries.no_window_flag(),
         )
     except subprocess.TimeoutExpired as exc:
         raise ProbeError(f"ffprobe timed out after {_PROBE_TIMEOUT:.0f}s") from exc

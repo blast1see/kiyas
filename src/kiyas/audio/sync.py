@@ -105,6 +105,7 @@ def _mono(track: AudioTrack, *, ffmpeg: Path, seconds: float, start: float):
             timeout=_DECODE_TIMEOUT,
             check=False,
             stdin=subprocess.DEVNULL,
+            creationflags=binaries.no_window_flag(),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise AnalysisError(f"could not decode {track.path.name} for sync: {exc}") from exc

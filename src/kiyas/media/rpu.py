@@ -252,7 +252,11 @@ def _read_one(
 
         try:
             with subprocess.Popen(  # noqa: S603
-                copy, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL
+                copy,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                creationflags=binaries.no_window_flag(),
             ) as reader:
                 assert reader.stdout is not None
                 try:
@@ -265,6 +269,7 @@ def _read_one(
                         check=False,
                         encoding="utf-8",
                         errors="replace",
+                        creationflags=binaries.no_window_flag(),
                     )
                 finally:
                     # Closing this end first stops ffmpeg filling a pipe nobody
@@ -296,6 +301,7 @@ def _parse_first_frame(rpu: Path, dovi_path: Path, source: Path) -> ActiveArea |
             check=False,
             encoding="utf-8",
             errors="replace",
+            creationflags=binaries.no_window_flag(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ActiveAreaError(f"could not parse the RPU of {source.name}: {exc}") from exc

@@ -98,7 +98,11 @@ def extract_enhancement_layer(
 
     try:
         with subprocess.Popen(  # noqa: S603
-            copy, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL
+            copy,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            creationflags=binaries.no_window_flag(),
         ) as reader:
             assert reader.stdout is not None
             try:
@@ -111,6 +115,7 @@ def extract_enhancement_layer(
                     check=False,
                     encoding="utf-8",
                     errors="replace",
+                    creationflags=binaries.no_window_flag(),
                 )
             finally:
                 # Closing our end first stops ffmpeg filling a pipe nobody is

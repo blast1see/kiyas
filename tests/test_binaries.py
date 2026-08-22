@@ -6,6 +6,7 @@ else in this file exists to keep that one honest.
 
 from __future__ import annotations
 
+import ast
 import os
 from pathlib import Path
 
@@ -127,3 +128,48 @@ def test_probe_version_reads_real_ffmpeg():
 
     assert version is not None
     assert "ffmpeg" in version.lower()
+
+
+# --------------------------------------------------------------------------
+# Console windows
+# --------------------------------------------------------------------------
+
+
+def test_every_subprocess_is_launched_without_a_console_window():
+    """A windowed build has no console, so each child that wants one gets its own.
+
+    That is not a cosmetic detail at this scale: a comparison runs hundreds of
+    short ffprobe and ffmpeg calls, and every one of them flashed a black
+    window on screen. Measured from a real windowed parent, watching every
+    20 ms for console windows that were not there before -- 20 calls put up 39
+    windows without the flag and none with it.
+
+    This walks the source rather than the behaviour because the failure is
+    invisible to a test: everything works, the pictures are right, and the only
+    symptom is on the user's screen. It is also the kind of thing that comes
+    back one call site at a time.
+    """
+    root = Path(__file__).resolve().parent.parent / "src" / "kiyas"
+    launchers = ("subprocess.Popen", "subprocess.run", "subprocess.check_output")
+    offenders = []
+
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not ast.unparse(node.func).endswith(launchers):
+                continue
+            if "creationflags" in {keyword.arg for keyword in node.keywords}:
+                continue
+            # Named by file rather than by line: pinning a line number here
+            # makes the guard fail on any edit above the call, which teaches
+            # people to update the expected value instead of reading it.
+            offenders.append(str(path.relative_to(root)))
+
+    # setup_env._run inherits the console on purpose, so pip's progress is
+    # visible while it installs; the flag would send that output nowhere. It is
+    # unreachable from a windowed build anyway, which refuses to run setup.
+    assert offenders == ["setup_env.py"], (
+        f"these subprocesses can open a console window on Windows: {offenders}"
+    )

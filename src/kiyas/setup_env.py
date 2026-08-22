@@ -136,7 +136,15 @@ def vs_packages() -> list[str]:
 
 
 def _run(args: list[str], *, description: str) -> None:
-    """Run a subprocess, streaming its output, and raise on failure."""
+    """Run a subprocess, streaming its output, and raise on failure.
+
+    The one subprocess in kiyas that does not pass ``no_window_flag()``, and
+    the exception is the point: this inherits the console on purpose so pip's
+    progress appears while it installs. The flag would give the child a console
+    of its own instead of the parent's, and with nothing redirected that output
+    would go nowhere. It costs nothing in a windowed build either, because a
+    frozen build refuses to run setup at all -- there is no pip to call.
+    """
     proc = subprocess.run(args, check=False)  # noqa: S603 - args are built here
     if proc.returncode != 0:
         raise SetupError(f"{description} failed with exit code {proc.returncode}. Output above.")

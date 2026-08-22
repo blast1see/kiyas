@@ -104,6 +104,7 @@ def _has_drawtext(ffmpeg: Path) -> bool:
             encoding="utf-8",
             errors="replace",
             stdin=subprocess.DEVNULL,
+            creationflags=binaries.no_window_flag(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -321,6 +322,7 @@ class FfmpegSource:
                 encoding="utf-8",
                 errors="replace",
                 stdin=subprocess.DEVNULL,
+                creationflags=binaries.no_window_flag(),
             )
         except (OSError, subprocess.SubprocessError):
             return
@@ -425,6 +427,7 @@ class FfmpegSource:
                 timeout=_FRAME_TIMEOUT,
                 check=False,
                 stdin=subprocess.DEVNULL,
+                creationflags=binaries.no_window_flag(),
             )
         except (OSError, subprocess.SubprocessError):
             return 0.0
@@ -492,6 +495,7 @@ class FfmpegSource:
                 timeout=_FRAME_TIMEOUT,
                 check=False,
                 stdin=subprocess.DEVNULL,
+                creationflags=binaries.no_window_flag(),
             )
         except (OSError, subprocess.SubprocessError):
             return []
@@ -544,6 +548,7 @@ class FfmpegSource:
                     errors="replace",
                     stdin=subprocess.DEVNULL,
                     cwd=workspace,
+                    creationflags=binaries.no_window_flag(),
                 )
             except subprocess.TimeoutExpired as exc:
                 raise EngineError(f"{self.name}: timed out writing frame {frame}") from exc

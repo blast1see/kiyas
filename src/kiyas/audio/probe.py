@@ -207,6 +207,7 @@ def mediainfo_extras(
             encoding="utf-8",
             errors="replace",
             stdin=subprocess.DEVNULL,
+            creationflags=binaries.no_window_flag(),
         )
         payload = json.loads(proc.stdout or "{}")
     except (OSError, subprocess.SubprocessError, ValueError):

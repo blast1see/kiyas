@@ -225,15 +225,27 @@ because a tone curve is monotonic: it moves every value and reorders none.
   subprocess call to mpv needs an explicit timeout and, where relevant,
   `--keep-open=no`. `_PROBE_TIMEOUT` in `binaries.py` exists because of this.
 
-- **`mpv` on the PATH is `mpv.com`, not `mpv.exe`, and it makes its own
-  console.** `PATHEXT` puts `.com` first, and mpv ships both: the `.com` is a
-  console wrapper so the GUI build has somewhere to write. Launched from a
-  windowed process it puts up a visible console -- one per variant of a
-  settings comparison. `MpvSession` passes `CREATE_NO_WINDOW`. Which children
-  need that was measured, not assumed: with every standard handle redirected,
-  ffmpeg gets no window either way, so the flag is not sprinkled over the other
-  subprocess calls. A flag applied everywhere stops recording which case it was
-  for.
+- **Every subprocess needs `CREATE_NO_WINDOW`, and a console window is not
+  owned by the process you think.** A windowed build has no console, so each
+  console child makes its own; a comparison runs hundreds of short ffprobe and
+  ffmpeg calls and every one flashed a black window. Measured on a real
+  windowed process: a *three-frame* comparison put up **176** console windows,
+  and none with the flag.
+
+  The trap is in how that was measured the first time. The window belongs to
+  **conhost.exe**, not to ffmpeg, so enumerating ffmpeg's own windows found
+  nothing and the conclusion was that ffmpeg did not need the flag -- which
+  shipped in 0.1.13 as a comment saying so. Watch instead for console-class
+  windows appearing anywhere, against a baseline taken beforehand, and poll:
+  these last milliseconds, so a single look after the fact sees nothing.
+
+  `mpv` is the loudest case because `PATHEXT` puts `.com` ahead of `.exe` and
+  mpv ships both -- the `.com` is a console wrapper, so it holds its window
+  open for as long as the render takes rather than flashing.
+
+  `test_every_subprocess_is_launched_without_a_console_window` walks the source
+  for new call sites. The one exception is `setup_env._run`, which inherits the
+  console on purpose so pip's progress shows.
 
 - **PowerShell's `-match` on an array filters instead of returning a boolean.**
   `if ($lines -notmatch "x")` is truthy whenever *any* line does not match,

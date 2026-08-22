@@ -164,17 +164,19 @@ def probe_version(path: Path, name: str | None = None) -> str | None:
 def no_window_flag() -> int:
     """Keep console windows from appearing when the GUI shells out.
 
-    Which children need this was measured from a real windowed process rather
-    than assumed, because the answer is not "all of them": launched with every
-    standard handle redirected, ffmpeg gets no window with or without the flag.
-    ``mpv.com`` does -- it is a console *wrapper*, shipped so that the GUI
-    build has somewhere to write, and it puts up a visible console of its own.
-    So a settings comparison run from kiyas-gui.exe opened one black window per
-    variant until this was passed.
+    Every subprocess in kiyas passes this. The one exception is documented
+    where it lives, in ``setup_env._run``.
 
-    Do not sprinkle it over the other subprocess calls on the strength of that:
-    the ones that were measured do not need it, and a flag applied everywhere
-    stops recording which case it was for.
+    It is needed by all of them, which an earlier measurement got wrong by
+    looking in the wrong place: a console window belongs to *conhost.exe*, not
+    to the process that owns the console, so enumerating ffmpeg's own windows
+    found none and the conclusion was that ffmpeg did not need the flag. It
+    does. Measured properly, by watching every 20 ms for console windows that
+    were not there before: 20 ffprobe and ffmpeg calls from a windowed parent
+    put up **39** console windows without the flag and **none** with it.
+
+    That is what a comparison feels like from kiyas-gui.exe -- hundreds of
+    short subprocesses, each flashing a black window.
     """
     if sys.platform == "win32":
         return getattr(subprocess, "CREATE_NO_WINDOW", 0)
