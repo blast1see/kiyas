@@ -368,6 +368,22 @@ def test_baking_is_allowed_alongside_automatic_tone_mapping(tmp_path):
     assert [source.dovi_el for source in project.sources] == [DoviEl.ON, DoviEl.ON]
 
 
+def test_dark_and_light_frames_can_be_asked_for(tmp_path):
+    """Even spacing finds the typical frame; banding is not in the typical frame."""
+    path = write(tmp_path, MINIMAL + "\n[frames]\ndark = 2\nlight = 1\n")
+
+    frames = config.load(path).frames
+
+    assert (frames.dark, frames.light) == (2, 1)
+
+
+def test_a_negative_number_of_extremes_is_rejected(tmp_path):
+    path = write(tmp_path, MINIMAL + "\n[frames]\ndark = -1\n")
+
+    with pytest.raises(ConfigError, match="dark"):
+        config.load(path)
+
+
 def test_a_negative_trim_is_rejected(tmp_path):
     """`clip[-5:]` is valid Python and takes the last five frames of the film."""
     path = write(
@@ -418,6 +434,8 @@ skip_start = "5%"
 skip_end = "12.5%"
 b_frames_only = false
 skip_dark = true
+dark = 2
+light = 1
 seed = 3
 
 [[source]]

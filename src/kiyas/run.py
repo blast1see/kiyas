@@ -384,6 +384,33 @@ def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:
                     f"to satisfy the frame rules; it is a different moment from the one the "
                     f"even spacing picked."
                 )
+
+        # Deliberately dark and bright frames, on top of the evenly spaced
+        # ones. Even spacing finds the typical frame, and the two questions
+        # people bring to a comparison do not live there: banding is in the
+        # dark scenes and highlight rolloff is in the bright ones.
+        if project.frames.method is not FrameMethod.MANUAL and (
+            project.frames.dark or project.frames.light
+        ):
+            if progress:
+                progress("looking for the darkest and brightest frames")
+            reference = judges[0]
+            picked = selector.extremes(
+                selector.window_for(project.frames, total),
+                project.frames.dark,
+                project.frames.light,
+                reference.mean_luma,
+                acceptable=acceptable,
+                avoid=set(frames),
+            )
+            wanted = project.frames.dark + project.frames.light
+            if len(picked) < wanted:
+                warnings.append(
+                    f"asked for {wanted} extreme frame(s) and found {len(picked)}: the rest of "
+                    f"the sampled positions did not satisfy the frame rules."
+                )
+            frames = sorted(set(frames) | set(picked))
+
         if not frames:
             raise RunError(
                 "no usable frames were found. Every candidate was rejected by the rules in "

@@ -52,6 +52,19 @@ completely different films scored 3.1. Agreement separates the same three
 cases cleanly: an aligned pair 9 of 9, a deliberately mistrimmed pair 8 of 9
 with the offset recovered exactly, two different films 1 of 9.
 
+### Frames chosen for being dark or bright
+
+`[frames] dark` and `light` add frames on top of the evenly spaced ones,
+picked for being the darkest and brightest of a sample. Even spacing finds the
+typical frame, and neither question people bring to a comparison lives there:
+banding is in the dark scenes and highlight rolloff is in the bright ones.
+`skip_dark` still applies as a floor, because the darkest frame of most films
+is a fade to black.
+
+Measured on a 4K WEB-DL, four evenly spaced frames plus two of each: the picks
+landed at 0.10 and 0.10 against an evenly spaced range of 0.18 to 0.32, and at
+0.37 and 0.63 above it.
+
 ### Also
 
 - `trim` no longer accepts negative numbers. `clip[-5:]` is valid Python and
