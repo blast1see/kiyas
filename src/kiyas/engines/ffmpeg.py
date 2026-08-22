@@ -31,7 +31,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from .. import assets
-from ..config import Source, Tonemap
+from ..config import DoviEl, Source, Tonemap
 from ..media import binaries
 from ..media.probe import HdrFormat, VideoInfo, probe
 from .base import ACTIVE_AREA, LUMA_SAMPLE, EngineError, RenderSettings, label_for
@@ -559,6 +559,27 @@ class FfmpegEngine:
         tools = tools or {}
         return binaries.find_binary("ffmpeg", tools.get("ffmpeg")) is not None
 
+    def _enhancement_note(self, source: Source, info: VideoInfo) -> str | None:
+        """What to say about a Dolby Vision enhancement layer this engine cannot use.
+
+        A profile 7 release carries half its picture in a second layer. Saying
+        nothing would be the exact failure composing it was written to end:
+        screenshots of a base layer, offered as screenshots of the release.
+        """
+        if not info.has_enhancement_layer or source.dovi_el is DoviEl.OFF:
+            return None
+        if source.dovi_el is DoviEl.ON:
+            raise EngineError(
+                f"{source.name}: only the VapourSynth engine can compose a Dolby Vision "
+                f"enhancement layer. Set engine = 'vapoursynth', or dovi_el = 'off' to "
+                f"compare the base layer alone."
+            )
+        return (
+            "carries a Dolby Vision profile 7 enhancement layer, which this engine cannot "
+            "compose: these are screenshots of the base layer alone. The VapourSynth engine "
+            "can, with \"dovi_el = 'on'\" on this source"
+        )
+
     def _tonemap_mode(self, source: Source, info: VideoInfo) -> Tonemap:
         if source.tonemap is not Tonemap.AUTO:
             return source.tonemap
@@ -605,6 +626,8 @@ class FfmpegEngine:
         if source.crop:
             left, right, top, bottom = source.crop
             filters.append(f"crop=in_w-{left + right}:in_h-{top + bottom}:{left}:{top}")
+
+        enhancement_note = self._enhancement_note(source, info)
 
         mode = self._tonemap_mode(source, info)
         if mode is Tonemap.DOVI:
@@ -655,4 +678,6 @@ class FfmpegEngine:
         prepared = FfmpegSource(source, info, ffmpeg, ffprobe, filters, target_fps, label, font)
         if prepared_notes:
             prepared.assumptions.append(prepared_notes)
+        if enhancement_note:
+            prepared.assumptions.append(enhancement_note)
         return prepared
