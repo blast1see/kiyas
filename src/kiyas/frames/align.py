@@ -54,9 +54,22 @@ MIN_WINDOW = 48
 #: makes with peak against floor, applied across positions instead of lags.
 SAMPLES = 9
 
-#: Below this peak-to-median ratio the answer is a guess, and says so. The
-#: audio module uses the same number for the same purpose.
-WEAK_MATCH = 4.0
+#: Below this share of sampled positions agreeing, the answer is a guess.
+#:
+#: Confidence is agreement between positions, not the shape of one score
+#: field. The audio module's peak-to-floor ratio was tried first, because the
+#: two measurements answer the same question -- and it does not transfer.
+#: Its value depends on how self-similar the material is rather than on how
+#: good the match is: measured on a real 4K feature a correct answer scored
+#: 3.5, and on ffmpeg's `testsrc2` a correct answer scored 1.1, against a
+#: threshold of 4. Both were right and both were reported as guesses, which is
+#: the failure this project has a name for.
+#:
+#: Positions agreeing is content-independent and says something a reader can
+#: act on: nine places in the film were measured and this many of them found
+#: the same offset. Two thirds because the median already survives a minority
+#: disagreeing -- this is about whether to trust the median at all.
+AGREEMENT = 0.6
 
 #: Stride of the first pass over a search window.
 #:
@@ -74,13 +87,18 @@ COARSE_STEP = 24
 
 #: How many candidates the first pass has to leave before striding is worth it.
 #:
-#: The confidence is the peak against the median of the whole field, so a field
-#: of five says nothing about how much better the winner is than the rest --
-#: measured on a 60-frame window, striding dropped a correct answer's
-#: confidence from 34 to 1.9 and had it reported as a guess. Below this many
-#: candidates the window is small enough to search at full rate anyway, which
-#: is the case a short clip is always in.
+#: Below this the window is small enough to search at full rate anyway, which
+#: is the case a short clip is always in, and striding it would only cost
+#: precision.
 MIN_COARSE_FIELD = 48
+
+#: How far a confirming position searches either side of the first answer.
+#:
+#: About four seconds. Wide enough that a position which does not really agree
+#: lands somewhere else and says so, narrow enough that eight of them cost a
+#: fraction of one wide search. A confirmation pinned to a couple of frames
+#: could only ever agree, which would make the agreement meaningless.
+CONFIRM_REACH = COARSE_STEP * 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,13 +107,13 @@ class FrameOffset:
 
     name: str
     frames: int
-    confidence: float
+    agreed: int
     sampled: int
     window: int
 
     @property
     def is_weak(self) -> bool:
-        return self.confidence < WEAK_MATCH
+        return self.sampled <= 0 or (self.agreed / self.sampled) < AGREEMENT
 
     def summary(self, fps: Fraction) -> str:
         if self.frames == 0:
@@ -104,7 +122,7 @@ class FrameOffset:
             direction = "later" if self.frames > 0 else "earlier"
             seconds = abs(self.frames) / float(fps) if fps else 0.0
             text = f"{abs(self.frames)} frames {direction} ({seconds:.2f}s)"
-        text += f", peak-to-median {self.confidence:.1f}"
+        text += f", {self.agreed} of {self.sampled} sampled positions agree"
         if self.is_weak:
             text += " -- weak match, treat this as a guess"
         return text
@@ -213,60 +231,67 @@ def measure(
 ) -> FrameOffset:
     """Measure how far ``other`` is from ``reference``.
 
-    Both callables take ``(start, count)`` and return that many consecutive
-    luma thumbnails, which is the shape a decoder is fast at: one call per
-    position rather than one per candidate offset. Asking frame by frame costs
-    a process launch each in the ffmpeg engine, and a search worth doing is
-    thousands of frames wide.
+    Both callables take ``(start, count, step)`` and return that many luma
+    thumbnails, which is the shape a decoder is fast at: one call per position
+    rather than one per candidate offset. Asking frame by frame costs a process
+    launch each in the ffmpeg engine, and a search worth doing is thousands of
+    frames wide.
     """
     if not positions:
-        return FrameOffset(name, 0, 0.0, 0, window)
+        return FrameOffset(name, 0, 0, 0, window)
 
-    votes: list[int] = []
-    confidences: list[float] = []
-
-    for position in positions:
+    def search(position: int, centre: int, reach: int) -> int | None:
+        """The best offset near ``centre``, measured at ``position``."""
         anchor = reference(position, run)
         if not anchor:
-            continue
+            return None
 
-        # Coarse pass: every COARSE_STEP-th frame across the whole window. A
-        # shot lasts seconds, so a stride of about a second still lands in the
-        # right one, and it is the difference between decoding a thousand
-        # frames here and decoding forty thousand.
-        start = position - window
-        span = window * 2 + run
+        start = position + centre - reach
+        span = reach * 2 + run
         # Striding only pays on a window wide enough to still leave a field
-        # worth taking a median of. A short clip searches at full rate, which
-        # it can afford precisely because it is short.
+        # worth taking a median of. A narrow one is searched at full rate,
+        # which it can afford precisely because it is narrow.
         step = COARSE_STEP if span // COARSE_STEP >= MIN_COARSE_FIELD else 1
-        coarse = other(start, span, step)
-        scores = score_field(anchor, coarse)
+        scores = score_field(anchor, other(start, span, step))
         if not scores:
-            continue
-        best = max(range(len(scores)), key=lambda index: scores[index])
-        floor = _median([abs(score) for score in scores]) or 1e-12
-        confidence = abs(scores[best]) / floor
-        approximate = start + best * step
+            return None
 
-        # Fine pass: full rate over the stride either side of the winner. The
-        # coarse pass can only be right to within its own stride, and a trim
-        # that is right to within a second is not a trim.
-        fine_start = approximate - step
-        fine = other(fine_start, step * 2 + run)
-        fine_scores = score_field(anchor, fine) if step > 1 else []
-        if fine_scores:
-            fine_best = max(range(len(fine_scores)), key=lambda index: fine_scores[index])
-            votes.append(fine_start + fine_best - position)
-        else:
-            votes.append(approximate - position)
-        confidences.append(confidence)
+        found = start + max(range(len(scores)), key=lambda index: scores[index]) * step
 
-    if not votes:
-        return FrameOffset(name, 0, 0.0, 0, window)
+        if step > 1:
+            # The coarse pass can only be right to within its own stride, and
+            # a trim right to within a second is not a trim.
+            fine_start = found - step
+            fine = score_field(anchor, other(fine_start, step * 2 + run))
+            if fine:
+                found = fine_start + max(range(len(fine)), key=lambda index: fine[index])
+        return found - position
+
+    # The offset is one number for the whole film, so the wide search only has
+    # to happen once. Doing it at every position is what made this unusable on
+    # real material: one percent of a feature is 2093 frames either side, and
+    # nine wide searches is tens of thousands of 4K frames decoded per source.
+    # The rest confirm it within CONFIRM_REACH of where the first one landed,
+    # which is what catches a position that fell in a shot the film repeats.
+    first = None
+    searched = 0
+    for index, position in enumerate(positions):
+        first = search(position, 0, window)
+        if first is not None:
+            searched = index
+            break
+    if first is None:
+        return FrameOffset(name, 0, 0, 0, window)
+
+    approximate = first
+    votes = [approximate]
+    for position in positions[searched + 1 :]:
+        confirmed = search(position, approximate, CONFIRM_REACH)
+        if confirmed is not None:
+            votes.append(confirmed)
 
     offset = int(_median([float(vote) for vote in votes]))
-    return FrameOffset(name, offset, _median(confidences), len(votes), window)
+    return FrameOffset(name, offset, votes.count(offset), len(votes), window)
 
 
 def suggested_trims(offsets: Sequence[int], trims: Sequence[int]) -> list[int]:

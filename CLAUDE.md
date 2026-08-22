@@ -347,12 +347,38 @@ because a tone curve is monotonic: it moves every value and reorders none.
   tests, seen from the outside: a PSNR between two captures is not a
   measurement of the encodes unless the labels match or are off.
 
-- **Striding a search window only pays when the window is wide.** The
-  alignment confidence is the peak against the median of the whole score
-  field, so a field of five says nothing. Measured on a 60-frame window:
-  striding dropped a correct answer's confidence from 34 to 1.9 and had it
-  reported as a guess. Below `MIN_COARSE_FIELD` candidates it searches at full
-  rate, which a short clip can afford precisely because it is short.
+- **The wide alignment search happens once, not once per position.** The
+  offset between two releases is one number for the whole film, so nine wide
+  searches measure the same thing nine times and pay nine times for it: one
+  percent of a feature is 2093 frames either side, which is tens of thousands
+  of 4K frames decoded per source and minutes of waiting. The first position
+  searches wide, the rest confirm within a stride of where it landed -- which
+  is what catches a position that happened to fall in a repeated shot. The
+  confidence comes from the wide search, because "is this peak distinctive
+  against the rest of the film" is a question a narrow window cannot answer.
+
+- **The audio module's peak-to-floor confidence does not transfer to
+  pictures.** It was the obvious thing to reuse -- the two measurements answer
+  the same question -- and it is worthless here. Its value tracks how
+  self-similar the material is, not how good the match is: measured on a real
+  4K feature, a *correct* alignment scored 3.5 peak-to-median and two
+  completely different films scored **3.1**. On ffmpeg's `testsrc2` a correct
+  answer scored 1.1. There is no threshold that separates those. Alignment
+  confidence is agreement between sampled positions instead, which is
+  content-independent and is something a reader can act on. The same three
+  cases, measured again with it: an aligned pair 9 of 9, a deliberately
+  mistrimmed pair 8 of 9 (and the offset recovered exactly), two different
+  films 1 of 9.
+
+- **Striding a search window only pays when the window is wide.** Below
+  `MIN_COARSE_FIELD` candidates it searches at full rate, which a short clip
+  can afford precisely because it is short, and striding it would only cost
+  precision.
+
+- **A confirming position has to be able to disagree.** Pinning it to a couple
+  of frames around the first answer makes agreement unanimous by construction
+  and the confidence meaningless. `CONFIRM_REACH` is about four seconds: wide
+  enough that a position which does not really agree lands somewhere else.
 
 - **Indexers do not expose the same frame props.** Read out of the shipped
   DLLs: lsmas has `DolbyVisionRPU` but not `HDR10Plus`; BestSource and ffms2

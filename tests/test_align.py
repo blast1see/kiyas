@@ -268,13 +268,24 @@ def test_the_reference_is_what_moves_when_another_source_plays_earlier():
 
 
 def test_a_weak_result_says_so_in_its_summary():
-    weak = align.FrameOffset("B", 5, 1.2, 3, 60)
+    """Three of nine positions finding the same offset is not an answer."""
+    weak = align.FrameOffset("B", 5, 3, 9, 60)
 
     assert "weak match" in weak.summary(FPS)
+    assert "3 of 9" in weak.summary(FPS)
+
+
+def test_a_result_most_positions_agree_on_is_not_called_a_guess():
+    assert not align.FrameOffset("B", 5, 8, 9, 60).is_weak
+
+
+def test_a_measurement_that_sampled_nothing_is_weak():
+    """Zero of zero is not unanimity."""
+    assert align.FrameOffset("B", 0, 0, 0, 60).is_weak
 
 
 def test_the_summary_names_the_direction_and_the_time():
-    later = align.FrameOffset("B", 24, 30.0, 9, 2000)
+    later = align.FrameOffset("B", 24, 9, 9, 2000)
 
     text = later.summary(FPS)
 
