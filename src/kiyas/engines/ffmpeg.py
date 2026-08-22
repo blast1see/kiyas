@@ -22,7 +22,9 @@ for a thousand.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable, Mapping
 from fractions import Fraction
 from functools import lru_cache
@@ -75,6 +77,11 @@ _LABEL_SHARE = 0.022
 _LABEL_MIN_SIZE = 11
 _LABEL_MARGIN_SHARE = 0.012
 _LABEL_MARGIN_MIN = 6
+
+#: What the font and the label text are called inside the workspace. Bare
+#: names with nothing in them a filtergraph parser reacts to.
+_FONT_NAME = "label.ttf"
+_LABEL_NAME = "label.txt"
 
 
 @lru_cache(maxsize=4)
@@ -141,6 +148,7 @@ class FfmpegSource:
         self._filters = filters
         self._label = label
         self._font = font
+        self._workspace: Path | None = None
         self._pict_cache: dict[int, str] = {}
         self._scanned: list[tuple[int, int]] = []
         self._pict_types_usable: bool | None = None
@@ -229,25 +237,41 @@ class FfmpegSource:
             ]
         )
 
-    def _drawtext(self, textfile: Path) -> str:
-        """The drawtext filter reading its text from ``textfile``.
+    def _label_workspace(self) -> Path:
+        """A directory kiyas names, holding the font and the label text.
+
+        Both go in here and are referenced by bare relative names, with ffmpeg
+        run from inside it. That is not tidiness: a filter option value cannot
+        carry an apostrophe, a comma or a bracket, and *paths* have those in
+        them. The label file used to be written beside the output, whose
+        directory is named after the source -- and "Director's Cut" broke it,
+        with ffmpeg reporting the failure as "Error opening output files",
+        which is not where the problem was. The font's own path is no safer:
+        it sits under the install directory, and a Windows account called
+        O'Brien is an ordinary thing to have.
+
+        Referencing them as ``label.ttf`` and ``label.txt`` from the working
+        directory leaves nothing to escape.
+        """
+        if self._workspace is None:
+            self._workspace = Path(tempfile.mkdtemp(prefix="kiyas-label-"))
+            if self._font is not None:
+                shutil.copyfile(self._font, self._workspace / _FONT_NAME)
+        return self._workspace
+
+    def _drawtext(self) -> str:
+        """The drawtext filter, reading its text from the workspace.
 
         The text goes through a file rather than the ``text=`` option because
-        the option cannot be escaped reliably. Three parsers read it in turn --
-        the filtergraph splitter, the option-value parser and drawtext's own
-        expansion -- and they do not agree with each other. Measured against
-        ffmpeg 2026-08, one character at a time, with the argument passed
-        straight to the process and no shell involved:
-
-            ':' needs two backslashes, ',[];' need one, and an apostrophe
-            cannot be made to work at all once any escaped colon follows it --
-            "Director's Cut" plus "Picture type: B" in the same label is
-            rejected however either one is escaped.
-
-        Since a source name is free text -- "Director's Cut", "100% grade",
-        "hibrit (DV P7 FEL + HDR10+)" -- a scheme with a known unfixable case
-        is not a scheme. A file has no such rules, and ``textfile`` is what the
-        filter offers for exactly this. Only its path needs escaping.
+        that option cannot be escaped reliably. Three parsers read it in turn
+        -- the filtergraph splitter, the option-value parser and drawtext's own
+        expansion -- and they do not agree. Measured against ffmpeg 2026-08,
+        one character at a time, argument passed straight to the process with
+        no shell: ``:`` needs two backslashes, ``,[];`` need one, and an
+        apostrophe cannot be made to work at all once any escaped colon
+        follows it. Since a source name is free text -- "Director's Cut",
+        "100% grade", "hibrit (DV P7 FEL + HDR10+)" -- a scheme with a known
+        unfixable case is not a scheme.
 
         ``expansion=none`` because kiyas writes the whole string itself: with
         expansion on, a '%' in a release name starts a directive.
@@ -256,8 +280,8 @@ class FfmpegSource:
         size = max(_LABEL_MIN_SIZE, int(height * _LABEL_SHARE))
         margin = max(_LABEL_MARGIN_MIN, int(height * _LABEL_MARGIN_SHARE))
         options = [
-            f"fontfile={_escape_filter_path(self._font)}",
-            f"textfile={_escape_filter_path(textfile)}",
+            f"fontfile={_FONT_NAME}",
+            f"textfile={_LABEL_NAME}",
             f"fontsize={size}",
             "fontcolor=white",
             "borderw=1",
@@ -496,11 +520,11 @@ class FfmpegSource:
             # FrameInfo sits in the VapourSynth chain. Drawn before a tonemap
             # it would be tone mapped along with the picture.
             filters = list(self._filters)
-            label_file = None
+            workspace = None
             if self.has_overlay:
-                label_file = directory / f".kiyas-label-{frame:06d}.txt"
-                label_file.write_text(self._label_lines(frame), encoding="utf-8")
-                filters.append(self._drawtext(label_file))
+                workspace = self._label_workspace()
+                (workspace / _LABEL_NAME).write_text(self._label_lines(frame), encoding="utf-8")
+                filters.append(self._drawtext())
             if filters:
                 args += ["-vf", ",".join(filters)]
             args += ["-pix_fmt", "rgb24", str(path)]
@@ -515,12 +539,10 @@ class FfmpegSource:
                     encoding="utf-8",
                     errors="replace",
                     stdin=subprocess.DEVNULL,
+                    cwd=workspace,
                 )
             except subprocess.TimeoutExpired as exc:
                 raise EngineError(f"{self.name}: timed out writing frame {frame}") from exc
-
-            if label_file is not None:
-                label_file.unlink(missing_ok=True)
 
             if proc.returncode != 0 or not path.is_file():
                 detail = (proc.stderr or "").strip().splitlines()
@@ -533,6 +555,9 @@ class FfmpegSource:
 
     def close(self) -> None:
         self._pict_cache.clear()
+        if self._workspace is not None:
+            shutil.rmtree(self._workspace, ignore_errors=True)
+            self._workspace = None
 
 
 class FfmpegEngine:

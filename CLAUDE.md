@@ -313,8 +313,15 @@ because a tone curve is monotonic: it moves every value and reorders none.
   the process with no shell: `:` needs *two* backslashes, `,[];` need one, and
   an apostrophe cannot be made to work at all once any escaped colon follows
   it -- so "Director's Cut" plus "Picture type: B" in one label has no working
-  form. `textfile=` has no such rules. Only the path still needs escaping, and
-  a Windows drive letter needs `C\:/...` there for the same reason.
+  form. `textfile=` has no such rules -- but a *path* has the same characters
+  in it, so the font and the label text are copied into a directory kiyas
+  names and referenced as `label.ttf` and `label.txt` with ffmpeg run from
+  inside it. Writing the label beside the output looked obvious and broke on
+  the first source called "Director's Cut": `run` names the output directory
+  after the source, and source names are free text. It surfaced as "Error
+  opening output files", which is not where the problem was. The font's own
+  path is no safer -- it sits under the install directory, and a Windows
+  account called O'Brien is an ordinary thing to have.
 
 - **Dolby Vision profile 7 is composed by vs-placebo, not by awsmfunc.**
   `awsmfunc` 1.3.5 is what PyPI has and its `MapDolbyVision` hard-fails without
