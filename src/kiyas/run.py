@@ -153,6 +153,7 @@ def _acceptability(prepared: list, project: Project, warnings: list[str]):
     """
     want_b_frames = project.frames.b_frames_only
     want_bright = project.frames.skip_dark
+    want_clean = project.frames.skip_combed
 
     if want_b_frames and not all(p.supports_frame_types for p in prepared):
         blind = [p.name for p in prepared if not p.supports_frame_types]
@@ -177,7 +178,17 @@ def _acceptability(prepared: list, project: Project, warnings: list[str]):
             f"share of the bitrate and flatter the weaker encode."
         )
 
-    if not want_b_frames and not want_bright:
+    if want_clean:
+        blind = [p.name for p in prepared if p.combed(0) is None]
+        if blind:
+            warnings.append(
+                f"comb detection is off: {', '.join(blind)} cannot answer for a single frame. "
+                f"Only the VapourSynth engine can, so a combed frame may be captured and it "
+                f"would show the deinterlacer's work rather than the encode's."
+            )
+            want_clean = False
+
+    if not want_b_frames and not want_bright and not want_clean:
         return None
 
     def acceptable(frame: int) -> bool:
@@ -192,6 +203,8 @@ def _acceptability(prepared: list, project: Project, warnings: list[str]):
                 elif kind == "I":
                     return False
             if want_bright and source.mean_luma(frame) < DARK_LUMA_THRESHOLD:
+                return False
+            if want_clean and source.combed(frame):
                 return False
         return True
 
