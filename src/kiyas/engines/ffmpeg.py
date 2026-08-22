@@ -445,6 +445,15 @@ class FfmpegSource:
                     str(wanted),
                     "-vf",
                     chain,
+                    # Not optional, and it is not about the stride. ffmpeg's
+                    # default pacing rewrites the output to a constant frame
+                    # rate, which duplicates and drops frames to fit -- so what
+                    # comes back is not the run that was asked for. Measured on
+                    # a 24fps clip with no stride at all: one frame duplicated
+                    # near the start put 45 of 48 thumbnails one frame late,
+                    # and `default[24]` was `passthrough[23]`. A systematic
+                    # one-frame bias is exactly the error this whole module
+                    # exists to find.
                     "-fps_mode",
                     "passthrough",
                     "-f",
