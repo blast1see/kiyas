@@ -182,9 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument(
         "--tmdb",
         default=None,
-        metavar="ID",
-        help="Attach a TMDB id, as MOVIE_1275779 or TV_1399. A bare number is "
-        "refused: slow.pics needs to know which of the two it is. slowpics only.",
+        metavar="ID_OR_NAME",
+        help="Attach a TMDB reference, as MOVIE_1275779 or TV_1399. A bare number is "
+        "refused: slow.pics needs to know which of the two it is. Anything that is not "
+        "a reference is looked up by name, which needs a key in KIYAS_TMDB_API_KEY. "
+        "slowpics only.",
     )
     publish.add_argument(
         "--format",
@@ -364,7 +366,19 @@ def _slowpics_sender(args, comparison, console):
     # server as a bare 400 with no body, after the whole comparison has been
     # hashed and offered -- a slow way to learn about a typo.
     if args.tmdb:
-        slowpics.normalise_tmdb(args.tmdb)
+        # Resolved here, before anything is hashed or offered. Learning that a
+        # title was misspelt after the whole comparison has been uploaded is a
+        # slow way to find out, which is why the reference was already
+        # validated at this point rather than at the end.
+        #
+        # A bare number keeps its own refusal: it is a reference with the one
+        # thing missing that cannot be guessed, not a title to go looking for.
+        if slowpics.looks_like_tmdb(args.tmdb) or args.tmdb.strip().isdigit():
+            args.tmdb = slowpics.normalise_tmdb(args.tmdb)
+        else:
+            from .publish import tmdb as tmdb_lookup
+
+            args.tmdb = tmdb_lookup.resolve(args.tmdb)
 
     def send(progress):
         return slowpics.upload(

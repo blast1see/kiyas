@@ -91,6 +91,16 @@ _TIMEOUT = 30.0
 _TMDB_PATTERN = re.compile(r"^(movie|tv)[_/:\s-]*(\d+)$", re.IGNORECASE)
 
 
+def looks_like_tmdb(value: str) -> bool:
+    """Whether ``value`` is a reference at all, rather than a title.
+
+    Separate from :func:`normalise_tmdb` because the caller has to tell "this
+    is a malformed reference" from "this is the name of a film" *before*
+    deciding whether to go and look it up.
+    """
+    return bool(_TMDB_PATTERN.match(str(value).strip()))
+
+
 def normalise_tmdb(value: str) -> str:
     """Turn a TMDB reference into the form slow.pics wants, or refuse it.
 

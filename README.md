@@ -397,6 +397,28 @@ Every image is hashed before upload and the digests go up with the collection
 metadata, so slow.pics can say which ones it already holds. Re-running a
 publish that died halfway only sends what is missing.
 
+### Naming the title
+
+slow.pics can attach a comparison to a TMDB entry, and `--tmdb` takes the
+reference it wants:
+
+```
+kiyas publish out/ --tmdb MOVIE_1275779
+kiyas publish out/ --tmdb "The Prestige"     # looked up by name
+```
+
+Nobody knows that number, so anything that is not a reference is searched for
+instead. That needs a TMDB key -- they are free to any account -- in
+`KIYAS_TMDB_API_KEY`, read from the environment for the same reason comp.pics'
+key is: kiyas has no credential store and is not gaining one for a field that
+is optional.
+
+A name that matches one title resolves. A name that matches several is a
+question rather than an answer -- "Dune" is two films twenty years apart -- so
+the candidates are printed and you pass the one you meant. A bare number is
+still refused: slow.pics needs to know whether it is a film or a series, and
+that is the one thing that cannot be guessed.
+
 ### Choosing a host
 
 ```
