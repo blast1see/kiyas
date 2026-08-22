@@ -97,6 +97,9 @@ class MpvSource:
     def picture_type(self, frame: int) -> str | None:
         return self._measure.picture_type(frame)
 
+    def luma_thumbnails(self, start: int, count: int, step: int = 1) -> list[bytes]:
+        return self._measure.luma_thumbnails(start, count, step)
+
     def mean_luma(self, frame: int) -> float:
         return self._measure.mean_luma(frame)
 

@@ -21,9 +21,9 @@ from fractions import Fraction
 from pathlib import Path
 
 from . import engines
-from .config import Engine, FrameMethod, Mode, Project, Source
+from .config import Engine, FrameMethod, FrameSelection, Mode, Project, Source
 from .engines.base import DARK_LUMA_THRESHOLD, EngineError, RenderSettings
-from .frames import selector
+from .frames import align, selector
 from .media.probe import probe
 
 MANIFEST_NAME = "kiyas-manifest.json"
@@ -196,6 +196,99 @@ def _acceptability(prepared: list, project: Project, warnings: list[str]):
         return True
 
     return acceptable
+
+
+def align_project(
+    project: Project, *, samples: int = align.SAMPLES, progress=None
+) -> tuple[Fraction, list]:
+    """Open every source and measure how far each is from the first.
+
+    Prepared with ``overlay=False``, and that is not a detail. The burnt-in
+    label carries the frame number, so it changes with every frame in a way
+    that is perfectly correlated with an offset of zero -- the strongest
+    possible spurious peak, and it would look like a confident answer.
+    """
+    if project.mode is Mode.SETTINGS:
+        raise RunError(
+            "a settings comparison renders one file several ways, so every column is "
+            "already the same frame of the same source. There is nothing to align."
+        )
+
+    missing = [source.path for source in project.sources if not source.path.is_file()]
+    if missing:
+        raise RunError(
+            "these source files do not exist:\n  " + "\n  ".join(str(path) for path in missing)
+        )
+
+    engine = engines.get_engine(choose_engine(project))
+    reference = probe(project.sources[0].path, ffprobe=project.tools.get("ffprobe"))
+
+    prepared = []
+    try:
+        for source in project.sources:
+            if progress:
+                progress(f"opening {source.name}")
+            try:
+                prepared.append(
+                    engine.prepare(
+                        source,
+                        target_fps=reference.fps,
+                        overlay=False,
+                        tools=project.tools,
+                        progress=progress,
+                        index_dir=project.index_dir,
+                    )
+                )
+            except EngineError as exc:
+                raise RunError(str(exc)) from exc
+
+        if progress:
+            progress("measuring the offset between sources")
+        return reference.fps, check_sync(prepared, project, samples=samples)
+    finally:
+        for item in prepared:
+            item.close()
+
+
+def check_sync(prepared, project: Project, *, samples: int = align.SAMPLES) -> list:
+    """Measure how far each source is from the first one.
+
+    Measured on the *prepared* sources rather than the files, so whatever crop,
+    resize and trim the project already applies has been applied. That makes
+    the answer a residual -- "your trim of 24 is three frames short" -- which
+    is what validates a hand-set number rather than replacing it, and it means
+    two sources at different resolutions have already been brought to a
+    comparable picture by the project itself.
+
+    This is not run automatically. `run` decodes a few dozen frames; this
+    decodes tens of thousands, and making every comparison minutes slower to
+    catch a mistake most projects do not have is the wrong trade. The
+    length-difference warning above is the cheap signal that it is worth doing.
+    """
+    if len(prepared) < 2:
+        return []
+
+    reference = prepared[0]
+    total = min(item.frame_count for item in prepared)
+    window = align.window_for(total)
+    positions = selector.select(
+        FrameSelection(method=FrameMethod.COUNT, count=samples),
+        total,
+        reference.fps,
+    )
+
+    results = []
+    for item in prepared[1:]:
+        results.append(
+            align.measure(
+                item.name,
+                reference.luma_thumbnails,
+                item.luma_thumbnails,
+                positions=positions,
+                window=window,
+            )
+        )
+    return results
 
 
 def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:

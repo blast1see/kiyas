@@ -59,6 +59,8 @@ config.py           the project TOML: model, validation, error messages
 media/binaries.py   locating and probing external executables
 media/probe.py      what a file is, via ffprobe
 frames/selector.py  which frames to capture (arithmetic only, no decoding)
+frames/align.py     how far apart two sources are (arithmetic only, no decoding)
+media/dovi.py       extracting a Dolby Vision enhancement layer, once
 engines/base.py     the protocol every engine implements
 engines/*.py        VapourSynth (default), ffmpeg (fallback), mpv (settings)
 mpvctl/ipc.py       JSON IPC: named pipe on Windows, socket elsewhere
@@ -84,7 +86,10 @@ Two boundaries are worth keeping:
 
 **`frames/selector.py` never decodes anything.** It does the arithmetic and
 takes a predicate for the rest, so the B-frame and dark-frame rules are tested
-without media and neither engine reimplements the search.
+without media and neither engine reimplements the search. `frames/align.py`
+holds the same line for the same reason: it takes callables that hand back luma
+thumbnails, so the score and the search are pinned down on content whose answer
+is known rather than on a feature film.
 
 **`run.py` names no engine.** It picks one, asks it to prepare each source, and
 writes what comes back. Anything engine-specific that leaks up to here is in
@@ -301,6 +306,59 @@ because a tone curve is monotonic: it moves every value and reorders none.
   and the *same project file* selects slightly different frames depending on
   the engine. Within one run only one engine is used, so a comparison is never
   internally inconsistent -- but a run is only reproducible against itself.
+
+- **ffmpeg's `drawtext` text option cannot be escaped reliably, so the text
+  goes in a file.** Three parsers read it in turn and they disagree. Measured
+  against ffmpeg 2026-08, one character at a time, argument passed straight to
+  the process with no shell: `:` needs *two* backslashes, `,[];` need one, and
+  an apostrophe cannot be made to work at all once any escaped colon follows
+  it -- so "Director's Cut" plus "Picture type: B" in one label has no working
+  form. `textfile=` has no such rules. Only the path still needs escaping, and
+  a Windows drive letter needs `C\:/...` there for the same reason.
+
+- **Dolby Vision profile 7 is composed by vs-placebo, not by awsmfunc.**
+  `awsmfunc` 1.3.5 is what PyPI has and its `MapDolbyVision` hard-fails without
+  `vs-nlq`, which has no distribution under any name and would need a Rust
+  toolchain -- the one thing this stack promises it never needs. vs-placebo
+  2.0.4 has `sh_dovi_compose_nlq` and `placebo.Tonemap` takes `dovi_el`, so it
+  is one keyword on a call that was already being made. Do not reintroduce the
+  awsmfunc route.
+
+- **The enhancement layer is a quarter of the base layer's size, and must not
+  be resized.** Measured on a UHD disc remux: 1920x1080 against 3840x2160.
+  libplacebo scales it in the shader. `MapDolbyVision` point-resizes it because
+  `vsnlq.MapNLQ` demands matching dimensions; copying that here would be
+  carrying a workaround for a plugin that is not being used.
+
+- **`DolbyVisionRPU` survives the depth conversion**, measured at 221 bytes
+  before and after `resize.Bicubic(format=YUV444P16)` on both layers. Worth
+  knowing because vs-placebo raises "Clips are missing `DolbyVisionRPU` prop"
+  at the first `get_frame` -- which is *after* a forty-minute extraction.
+
+- **Numbers from the profile 7 remux this was built against**, so the next
+  person can tell whether their file is behaving: 78 GB source, extraction
+  10.3 minutes, layer 4.64 GB (5.9%), and composed output differing from
+  base-layer-only by 61.2 dB PSNR. Real, and far too subtle to find by looking.
+
+- **Two sources that are pixel-identical still score about 36 dB against each
+  other if their labels differ.** Measured on a pair whose base layers hash
+  identically: the burnt-in name is a few hundred bright pixels on a 3840x1606
+  frame and that is enough. This is the same trap as `overlay=False` in pixel
+  tests, seen from the outside: a PSNR between two captures is not a
+  measurement of the encodes unless the labels match or are off.
+
+- **Striding a search window only pays when the window is wide.** The
+  alignment confidence is the peak against the median of the whole score
+  field, so a field of five says nothing. Measured on a 60-frame window:
+  striding dropped a correct answer's confidence from 34 to 1.9 and had it
+  reported as a guess. Below `MIN_COARSE_FIELD` candidates it searches at full
+  rate, which a short clip can afford precisely because it is short.
+
+- **Indexers do not expose the same frame props.** Read out of the shipped
+  DLLs: lsmas has `DolbyVisionRPU` but not `HDR10Plus`; BestSource and ffms2
+  have both. It costs nothing today because vs-placebo ignores `HDR10Plus`
+  anyway -- but if that ever changes, the base layer's indexer preference in
+  `_load` is what would gate it, and it tries lsmas first.
 
 ## Driving mpv
 

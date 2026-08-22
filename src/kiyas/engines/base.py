@@ -154,6 +154,21 @@ class PreparedSource(Protocol):
         """Average luma in [0, 1]."""
         ...
 
+    def luma_thumbnails(self, start: int, count: int, step: int = 1) -> list[bytes]:
+        """``count`` consecutive luma thumbnails starting at ``start``.
+
+        Each is :data:`LUMA_SAMPLE` pixels of full-range 8-bit grey taken from
+        the :data:`ACTIVE_AREA` of the frame -- the same reduction
+        :meth:`mean_luma` is measured over, so the two cannot drift apart.
+
+        Consecutive, and in one call, because that is the shape a decoder is
+        fast at: measuring how far apart two sources are means scoring
+        thousands of candidate positions, and asking frame by frame costs one
+        process launch each in the ffmpeg engine. Returning fewer than asked
+        for means the clip ended.
+        """
+        ...
+
     def write_frames(self, frames: list[int], directory: Path) -> list[Path]:
         """Write one PNG per frame into ``directory``; return the paths written."""
         ...
