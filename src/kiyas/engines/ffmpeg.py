@@ -404,6 +404,67 @@ class FfmpegSource:
             return 0.0
         return sum(proc.stdout) / (len(proc.stdout) * 255.0)
 
+    def luma_thumbnails(self, start: int, count: int, step: int = 1) -> list[bytes]:
+        """``count`` consecutive luma thumbnails from ``start``.
+
+        The same reduction :meth:`mean_luma` measures over -- same crop, same
+        size, same full-range grey -- because two reductions that drift apart
+        are two engines disagreeing about what they are looking at.
+
+        One process for the whole run rather than one per frame. A search wide
+        enough to be worth doing is thousands of frames, and at one launch each
+        that is not a measurement anybody would wait for; decoded forward from
+        a single seek it is one launch and a sequential read. A short return
+        means the clip ended, and the caller sees fewer candidates rather than
+        padding that would correlate with nothing.
+        """
+        if count <= 0 or self.frame_count <= 0:
+            return []
+        start = max(0, min(start, self.frame_count - 1))
+        count = min(count, self.frame_count - start)
+        crop = f"crop=iw*{ACTIVE_AREA}:ih*{ACTIVE_AREA}"
+        chain = f"{crop},scale={LUMA_SAMPLE[0]}:{LUMA_SAMPLE[1]},format=gray"
+        wanted = count
+        if step > 1:
+            # The decode is sequential either way; what a stride saves is the
+            # scaling, the pipe and the ranking, which is most of the cost.
+            chain = f"select=not(mod(n\\,{step})),{chain}"
+            wanted = (count + step - 1) // step
+        try:
+            proc = subprocess.run(  # noqa: S603
+                [
+                    str(self._ffmpeg),
+                    "-v",
+                    "error",
+                    "-accurate_seek",
+                    "-ss",
+                    f"{self._timestamp(start):.6f}",
+                    "-i",
+                    str(self._source.path),
+                    "-frames:v",
+                    str(wanted),
+                    "-vf",
+                    chain,
+                    "-fps_mode",
+                    "passthrough",
+                    "-f",
+                    "rawvideo",
+                    "-",
+                ],  # fmt: skip
+                capture_output=True,
+                timeout=_FRAME_TIMEOUT,
+                check=False,
+                stdin=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        if proc.returncode != 0 or not proc.stdout:
+            return []
+
+        size = LUMA_SAMPLE[0] * LUMA_SAMPLE[1]
+        data = proc.stdout
+        return [data[i : i + size] for i in range(0, len(data) - size + 1, size)]
+
     # -- capture ---------------------------------------------------------
 
     def write_frames(self, frames: list[int], directory: Path) -> list[Path]:

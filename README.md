@@ -77,8 +77,8 @@ dropped next to a release must never be executed.
   other. If it lives somewhere unusual, name it under `[tools]` in the project
   file instead of putting it on PATH
 - Optional: [MediaInfo](https://mediaarea.net/en/MediaInfo) for detailed audio
-  metadata, [dovi_tool](https://github.com/quietvoid/dovi_tool) for Dolby
-  Vision enhancement layers
+  metadata, [dovi_tool](https://github.com/quietvoid/dovi_tool) for composing Dolby
+  Vision profile 7 enhancement layers
 
 ## Install
 
@@ -130,6 +130,7 @@ kiyas setup               # install the VapourSynth stack into the current envir
 kiyas init project.toml   # write a starter project file
 kiyas run project.toml    # produce the comparison
 kiyas publish out/        # upload it to a comparison host
+kiyas align project.toml  # measure how far apart the sources are, in frames
 kiyas pick film.mkv       # choose frames by watching, in mpv
 kiyas templates           # list the built-in settings comparisons
 kiyas audio a.mkv b.mkv   # compare audio tracks
@@ -157,6 +158,7 @@ skip_dark = true          # a black frame compares nothing
 path = "1917.2160p.UHD.BluRay.REMUX.DV.HDR.mkv"
 name = "UHD REMUX"
 tonemap = "auto"          # auto | hdr10 | hdr10plus | dovi | none
+dovi_el = "auto"          # off | auto | on -- Dolby Vision enhancement layer
 
 [[source]]
 path = "1917.1080p.BluRay.x264.mkv"
@@ -178,6 +180,55 @@ bitrate, so comparing them flatters the weaker encode — kiyas nudges each
 selected position forward until the frame is a B-frame *in every source*.
 **Skip dark**: a frame that is essentially black compares nothing. Brightness is
 measured over the centre of the picture so letterbox bars do not skew it.
+
+## Dolby Vision profile 7
+
+A profile 7 release carries its picture in two layers: a base layer any HDR10
+decoder can read, and an enhancement layer only a Dolby Vision decoder composes
+back in. Screenshots of the base layer alone are not what a Dolby Vision player
+shows, and comparing one release's base layer against another's compares
+something neither viewer sees.
+
+```toml
+[[source]]
+path = "film.2160p.UHD.BluRay.REMUX.DV.HDR.mkv"
+name = "UHD Remux"
+dovi_el = "on"            # compose the enhancement layer in
+```
+
+`auto`, the default, detects the layer and says so in the run's warnings
+without composing it. That is deliberate: extracting the layer reads the whole
+file, and doing that unasked is a worse surprise than a stated caveat. Measured
+on a 78 GB profile 7 remux -- 10.3 minutes, and a 4.64 GB layer, which is kept
+and reused. `off` is silent.
+
+`on` needs [dovi_tool](https://github.com/quietvoid/dovi_tool) and the
+VapourSynth engine, and fails rather than warning if it cannot do what it was
+asked. The extracted layer goes wherever `[output] index_dir` points, or beside
+the media, for the same reason indexer caches do.
+
+`resize` cannot be combined with it: the enhancement layer is composed pixel
+against pixel with the base layer, and resampling either destroys that.
+
+## Checking the sync
+
+`trim` lines two releases up, and until you check it there is nothing in the
+output to say whether it is right -- a wrong trim is wrong in every frame and
+every frame still looks like a frame.
+
+```
+kiyas align project.toml         # measure it
+kiyas run project.toml --check-sync
+```
+
+It reports how far each source is from the first, how confident that is, and
+the `trim` lines to paste in. **Positive means the source plays later**, which
+is the number to add to its `trim`. A weak match says so rather than handing
+you a number that looks like an answer.
+
+This is not part of an ordinary run. `run` decodes a few dozen frames; this
+decodes thousands, and making every comparison slower to catch a mistake most
+projects do not have is the wrong trade.
 
 ## Settings comparisons
 
@@ -418,6 +469,8 @@ kiyas would not exist without prior work by other people:
 - **[awsmfunc](https://github.com/OpusGang/awsmfunc)** — `FrameInfo`, `fixlvls`,
   `MapDolbyVision`.
 - **[Slowpoke Pics](https://slow.pics)** — for hosting comparisons for free.
+- **DejaVu Fonts** -- the label font kiyas ships, under the Bitstream Vera
+  and Arev licences. See `src/kiyas/assets/DejaVuSans.LICENSE`.
 
 ## License
 
