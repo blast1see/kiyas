@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.9
+
+### Columns that are not the same size say so
+
+Two pictures of different shapes cannot be flipped between, and flipping
+between them is the one thing a comparison is for. Nothing noticed: every image
+was written, the manifest was valid, the upload would have succeeded. Measured
+on a real pair — a 3840x1606 WEB-DL against a 3840x2160 remux, run without a
+crop, and the run had nothing to say about it.
+
+It does not suggest the numbers. The obvious arithmetic is wrong: splitting the
+difference gives 277 rows top and bottom where that remux's own Dolby Vision
+metadata says 276, with the last row coming from the WEB-DL's conformance
+window. A suggestion one row out is worse than none, because it looks like an
+answer. The warning points at the RPU's level 5 offsets, which is where the
+real number is, and the README shows how to read them.
+
 ## 0.1.8
 
 ### The packaged build stops giving instructions it cannot follow

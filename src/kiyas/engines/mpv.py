@@ -79,6 +79,11 @@ class MpvSource:
 
         self.fps = target_fps or source_fps
         self.frame_count = measure.frame_count
+        # The source's size, not the render's: mpv only learns what it drew
+        # after it has drawn something. It costs nothing to be approximate
+        # here -- every column of a settings comparison is the same file at the
+        # same size, so the size check this feeds has nothing to compare.
+        self.width, self.height = measure.width, measure.height
 
     # -- measurement, delegated ------------------------------------------
 

@@ -186,6 +186,8 @@ class VapourSynthSource:
         self.info = info
         self.assumptions = assumptions
         self.frame_count = clip.num_frames
+        self.width = clip.width
+        self.height = clip.height
         self.fps = Fraction(clip.fps_num, clip.fps_den) if clip.fps_den else info.fps
 
     @property
