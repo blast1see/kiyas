@@ -664,6 +664,13 @@ class MainWindow(QMainWindow):
         from .. import run as run_module
 
         project = self.build_project()
+        # A relative output is resolved against the first source, the way the
+        # audio path already does it. Left alone it resolves against the
+        # process's working directory, which a window has no way of showing --
+        # typing "out" and finding the screenshots on whichever drive the file
+        # dialog last visited is not a place anybody would look for them.
+        if not project.output.is_absolute():
+            project.output = (project.sources[0].path.parent / project.output).resolve()
         self._output_directory = project.output
 
         def work(progress):

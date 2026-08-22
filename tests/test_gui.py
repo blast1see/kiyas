@@ -665,3 +665,40 @@ def test_pressing_run_produces_a_comparison(application, tmp_path):
         assert (tmp_path / "out" / "kiyas-manifest.json").is_file()
     finally:
         window.close()
+
+
+def test_a_relative_output_lands_next_to_the_first_source(window, tmp_path):
+    """A window has no way of showing its working directory.
+
+    Left to resolve against the process, typing "out" puts the screenshots on
+    whichever drive the file dialog last visited -- which is where they were
+    found, and not where anybody would look. The audio path already resolved
+    it against the first source; this is the same answer for the other mode.
+    """
+    media = tmp_path / "media"
+    media.mkdir()
+    first = media / "a.mkv"
+    first.write_bytes(b"")
+    (media / "b.mkv").write_bytes(b"")
+
+    window.add_paths([first, media / "b.mkv"])
+    window.output_edit.setText("out")
+
+    window._comparison_work()
+
+    assert window._output_directory == (media / "out").resolve()
+
+
+def test_an_absolute_output_is_left_alone(window, tmp_path):
+    media = tmp_path / "media"
+    media.mkdir()
+    for name in ("a.mkv", "b.mkv"):
+        (media / name).write_bytes(b"")
+    elsewhere = (tmp_path / "elsewhere").resolve()
+
+    window.add_paths([media / "a.mkv", media / "b.mkv"])
+    window.output_edit.setText(str(elsewhere))
+
+    window._comparison_work()
+
+    assert window._output_directory == elsewhere
