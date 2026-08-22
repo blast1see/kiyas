@@ -368,6 +368,15 @@ class FfmpegSource:
 
     # -- luma ------------------------------------------------------------
 
+    def combed(self, frame: int) -> bool | None:
+        """Always ``None``: this engine has no comb detector.
+
+        ffmpeg's `idet` reports on a *stream* over a run of frames rather than
+        answering for one, which is a different question from the one being
+        asked here.
+        """
+        return None
+
     def mean_luma(self, frame: int) -> float:
         """Average luma of the active picture area, in [0, 1].
 

@@ -155,6 +155,7 @@ b_frames_only = true      # I-frames get more bitrate and flatter a weak encode
 skip_dark = true          # a black frame compares nothing
 # dark = 2                # ...but ask for the darkest usable frames as well
 # light = 2               # ...and the brightest
+# skip_combed = true      # for an interlaced-source release; see below
 
 [[source]]
 path = "1917.2160p.UHD.BluRay.REMUX.DV.HDR.mkv"
@@ -182,6 +183,21 @@ bitrate, so comparing them flatters the weaker encode — kiyas nudges each
 selected position forward until the frame is a B-frame *in every source*.
 **Skip dark**: a frame that is essentially black compares nothing. Brightness is
 measured over the centre of the picture so letterbox bars do not skew it.
+
+**Combed frames** are off by default and worth understanding before turning
+on. A frame with interlacing combs compares the deinterlacer's work rather
+than the encode's, so on a release cut from an interlaced master
+`skip_combed = true` is the rule you want. It needs the VapourSynth engine --
+ffmpeg's `idet` answers for a *stream*, not for one frame -- and the
+orchestrator says so and carries on rather than pretending the rule is active.
+
+It is off by default because the detector reads high-frequency horizontal
+detail as combing. Measured on a real film clip and an interlaced copy of
+itself: 19 of 30 combed frames caught and **none** of the progressive original
+flagged. Measured on ffmpeg's `testsrc2` and `mandelbrot`, whose hard edges are
+nothing like film: **20 progressive frames out of 20** flagged. Animation has
+hard edges too, so turn this on for the material it is for and check what it
+kept.
 
 `dark` and `light` add frames on top of the evenly spaced ones, chosen for
 being the darkest and brightest of a sample. Even spacing finds the *typical*

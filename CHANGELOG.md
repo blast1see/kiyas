@@ -65,6 +65,22 @@ Measured on a 4K WEB-DL, four evenly spaced frames plus two of each: the picks
 landed at 0.10 and 0.10 against an evenly spaced range of 0.18 to 0.32, and at
 0.37 and 0.63 above it.
 
+### Combed frames can be skipped
+
+`[frames] skip_combed` rejects frames showing interlacing combs, which compare
+the deinterlacer's work rather than the encode's. VapourSynth only; the ffmpeg
+engine says it cannot answer for a single frame and the rule turns itself off
+with a warning rather than silently reporting every frame as clean.
+
+Off by default, and the measurement is why: on a real film clip and an
+interlaced copy of itself it caught 19 of 30 combed frames and flagged none of
+the progressive original, but on ffmpeg's `testsrc2` and `mandelbrot` it
+flagged 20 progressive frames out of 20. It reads hard horizontal detail as
+combing, and animation has hard edges. That also means it cannot be
+integration-tested on synthetic media, so the detector is checked by hand
+against real material the way frame accuracy and tonemapping are, and the
+tests here pin down everything around it.
+
 ### Also
 
 - `trim` no longer accepts negative numbers. `clip[-5:]` is valid Python and
