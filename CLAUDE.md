@@ -61,6 +61,7 @@ media/probe.py      what a file is, via ffprobe
 frames/selector.py  which frames to capture (arithmetic only, no decoding)
 frames/align.py     how far apart two sources are (arithmetic only, no decoding)
 media/dovi.py       extracting a Dolby Vision enhancement layer, once
+media/rpu.py        where the picture is, per the Dolby Vision metadata
 engines/base.py     the protocol every engine implements
 engines/*.py        VapourSynth (default), ffmpeg (fallback), mpv (settings)
 mpvctl/ipc.py       JSON IPC: named pipe on Windows, socket elsewhere
@@ -346,6 +347,44 @@ because a tone curve is monotonic: it moves every value and reorders none.
   person can tell whether their file is behaving: 78 GB source, extraction
   10.3 minutes, layer 4.64 GB (5.9%), and composed output differing from
   base-layer-only by 61.2 dB PSNR. Real, and far too subtle to find by looking.
+
+- **Reading the active area is nearly free, and reading it once is wrong.**
+  `dovi_tool extract-rpu --limit N` stops after N frames and closes the pipe,
+  so one sample against a 78 GB remux takes about 0.2 seconds and the file is
+  never read through. That cheapness is what makes the rule affordable: the
+  picture's shape can change as a film plays -- an IMAX sequence opens the
+  frame out and closes it again -- and a sample taken inside either stretch
+  looks perfectly constant. Five positions spread across the film, and the
+  distinct shapes reported rather than averaged.
+
+- **The RPU's active area and the other release's crop are two different
+  numbers.** Measured on the pair this was built against: the disc's own level
+  5 says 276 rows top and bottom, leaving 1608, while the iTunes WEB-DL of the
+  same film is 1606. Neither is wrong -- the releases disagree -- so the
+  warning prints the crop the metadata asks for *and* says how far that still
+  leaves the two apart. Quietly moving the two rows to the bottom edge to make
+  them match would be inventing a framing no one chose.
+
+- **"No level 5 here" and "I could not read this" are opposite answers.** A
+  release already cropped to its own picture carries no level 5 block at all,
+  which is a fact about the file; an RPU that will not parse is a fact about
+  the reader. Collapsing them into one value is how a parser comes to report a
+  film whose shape changes as a film with no metadata, and the two lead to
+  opposite decisions about whether the source can be cropped. Absent is a
+  value; unreadable raises.
+
+- **`dovi_tool info` prints a line before its JSON.** "Parsing RPU file..."
+  goes to standard output, ahead of the document, so `json.loads` on the whole
+  of it fails against every file there is. The document starts at the first
+  brace. `payload_from` has a test of its own because this is the kind of thing
+  that works until the tool adds a line.
+
+- **Level 5 arrives among six or seven siblings and the set is not fixed.**
+  Real blocks measured: a disc remux carries Level1, three Level2s, Level4,
+  Level5, Level6; the WEB-DL of the same film has no Level4 and no Level5.
+  Where dovi_tool nests them depends on the RPU's content-mapping version, so
+  both the nested and the flat position are searched -- looking in one and
+  finding nothing would report a file that has the block as having none.
 
 - **Two sources that are pixel-identical still score about 36 dB against each
   other if their labels differ.** Measured on a pair whose base layers hash
