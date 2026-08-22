@@ -22,9 +22,11 @@ from collections.abc import Callable, Iterator, Mapping
 from fractions import Fraction
 from pathlib import Path
 
-from ..config import Source, Tonemap
+from ..config import DoviEl, Source, Tonemap
+from ..media.binaries import BinaryNotFound
+from ..media.dovi import DoviError, extract_enhancement_layer
 from ..media.probe import HdrFormat, VideoInfo, probe
-from .base import ACTIVE_AREA, LUMA_SAMPLE, EngineError, RenderSettings
+from .base import ACTIVE_AREA, LUMA_SAMPLE, EngineError, RenderSettings, label_for
 
 #: lsmas and BestSource report indexing progress through VapourSynth's logger,
 #: one message per percent. Left alone that is 200 lines of noise per source,
@@ -379,7 +381,7 @@ class VapourSynthEngine:
             HdrFormat.SDR: Tonemap.NONE,
         }[info.hdr_format]
 
-    def _apply_tonemap(self, clip, mode: Tonemap):
+    def _apply_tonemap(self, clip, mode: Tonemap, enhancement_layer=None):
         import vapoursynth as vs
 
         core = vs.core
@@ -427,11 +429,19 @@ class VapourSynthEngine:
                 **common,
             )
         elif mode is Tonemap.DOVI:
+            extra = {}
+            if enhancement_layer is not None:
+                # vs-placebo composes the enhancement layer and maps the result
+                # in the same pass -- there is no call that does only the
+                # composition. Both clips have to be 16-bit YUV carrying their
+                # DolbyVisionRPU frame prop, which is what the plugin checks.
+                extra["dovi_el"] = enhancement_layer.resize.Bicubic(format=vs.YUV444P16)
             clip = core.placebo.Tonemap(
                 clip,
                 src_csp=_CSP_DOVI,
                 tone_mapping_function=_TONEMAP_MOBIUS,
                 use_dovi=True,
+                **extra,
                 **common,
             )
         else:
@@ -455,6 +465,92 @@ class VapourSynthEngine:
 
         if changed and clip.width % 2 == 0 and clip.height % 2 == 0:
             return clip.resize.Bicubic(format=vs.YUV420P10)
+        return clip
+
+    def _open_enhancement_layer(
+        self,
+        source: Source,
+        info: VideoInfo,
+        mode: Tonemap,
+        *,
+        tools: dict[str, str],
+        index_dir: Path | None,
+        progress: Callable[[str], None] | None,
+        assumptions: list[str],
+    ):
+        """The clip to compose into ``source``, or ``None`` to leave it alone.
+
+        Every way this can decline is a note rather than a failure. A base
+        layer on its own is still a picture of the film, so refusing to produce
+        the comparison would throw away material the user may well have meant
+        to compare that way -- but it is a *different* picture from the one a
+        Dolby Vision player shows, so saying nothing is not an option either.
+        """
+        if source.dovi_el is DoviEl.OFF:
+            return None
+
+        if not info.has_enhancement_layer:
+            if source.dovi_el is DoviEl.ON:
+                raise EngineError(
+                    f"{source.name}: dovi_el = 'on', but ffprobe reports "
+                    f"dv_profile={info.dovi_profile}, el_present_flag="
+                    f"{int(info.dovi_el_present)}. Only a profile 7 file carries a "
+                    f"picture-bearing enhancement layer; there is nothing here to bake."
+                )
+            return None
+
+        # From here the file does have a layer. Under 'auto' kiyas says so and
+        # captures the base layer anyway, because extracting the layer reads the
+        # whole file -- tens of gigabytes on a disc remux -- and doing that
+        # without being asked is a worse surprise than a stated caveat.
+        if source.dovi_el is DoviEl.AUTO:
+            assumptions.append(
+                "carries a Dolby Vision profile 7 enhancement layer, which is not composed: "
+                "these are screenshots of the base layer alone. Add \"dovi_el = 'on'\" to "
+                "this source to bake it in, which reads the whole file once"
+            )
+            return None
+
+        if source.resize:
+            raise EngineError(
+                f"{source.name}: 'resize' cannot be combined with dovi_el = 'on'. The "
+                f"enhancement layer is composed pixel against pixel with the base layer, "
+                f"and resampling either of them destroys that correspondence. Set "
+                f"dovi_el = 'off' to compare the base layer alone, or drop the resize."
+            )
+
+        if mode is not Tonemap.DOVI:
+            raise EngineError(
+                f"{source.name}: dovi_el = 'on' needs Dolby Vision tone mapping, but this "
+                f"source resolved to '{mode.value}'. The layer is composed inside that one "
+                f"pass, so there is no way to bake it and map some other way."
+            )
+
+        cache_dir = index_dir if index_dir is not None else source.path.parent
+        try:
+            layer = extract_enhancement_layer(
+                source.path,
+                cache_dir,
+                ffmpeg=tools.get("ffmpeg"),
+                dovi_tool=tools.get("dovi_tool"),
+                progress=progress,
+            )
+        except BinaryNotFound as exc:
+            # 'on' is an explicit request for a specific picture, so failing to
+            # produce it is an error rather than a note. Under 'auto' this code
+            # is never reached.
+            raise EngineError(
+                f"{source.name}: dovi_el = 'on' needs dovi_tool, which was not found. "
+                f"Install it and put it on PATH, name it under [tools], or set "
+                f"dovi_el = 'off'. 'kiyas doctor' reports what it can see."
+            ) from exc
+        except DoviError as exc:
+            raise EngineError(f"{source.name}: {exc}") from exc
+
+        with _capture_indexing(progress, f"{source.name} enhancement layer") as indexer_output:
+            clip = self._load(layer, index_dir)
+        assumptions.extend(f"indexer said: {line}" for line in indexer_output)
+
         return clip
 
     def prepare(
@@ -488,11 +584,30 @@ class VapourSynthEngine:
             clip, assumptions = self._ensure_colour_props(clip, info)
         assumptions.extend(f"indexer said: {line}" for line in indexer_output)
 
+        mode = self._tonemap_mode(source, info)
+        enhancement = self._open_enhancement_layer(
+            source,
+            info,
+            mode,
+            tools=tools,
+            index_dir=index_dir,
+            progress=progress,
+            assumptions=assumptions,
+        )
+
         # --- the fixed order, see config.PROCESSING_ORDER ---
+        # Whatever happens to the base layer happens to the enhancement layer
+        # in the same statement. They are composed pixel against pixel, so a
+        # transformation applied to one and not the other is not a wrong
+        # picture, it is a wrong picture that still looks like a picture.
         if source.normalize_fps and target_fps is not None:
             clip = core.std.AssumeFPS(
                 clip, fpsnum=target_fps.numerator, fpsden=target_fps.denominator
             )
+            if enhancement is not None:
+                enhancement = core.std.AssumeFPS(
+                    enhancement, fpsnum=target_fps.numerator, fpsden=target_fps.denominator
+                )
 
         if source.trim:
             if source.trim >= clip.num_frames:
@@ -501,6 +616,8 @@ class VapourSynthEngine:
                     f"(the clip has {clip.num_frames})"
                 )
             clip = clip[source.trim :]
+            if enhancement is not None:
+                enhancement = enhancement[source.trim :]
 
         if source.resize:
             width, height = source.resize
@@ -518,21 +635,18 @@ class VapourSynthEngine:
                 )
             clip = core.std.CropRel(clip, left, right, top, bottom)
             clip = self._even_format(clip, odd)
+            if enhancement is not None:
+                enhancement = core.std.CropRel(enhancement, left, right, top, bottom)
 
-        mode = self._tonemap_mode(source, info)
         if mode is not Tonemap.NONE:
-            clip = self._apply_tonemap(clip, mode)
+            clip = self._apply_tonemap(clip, mode, enhancement)
 
         if source.luma_fix:
             import awsmfunc as awf
 
             clip = awf.fixlvls(clip)
 
-        label = source.name
-        if mode is not Tonemap.NONE:
-            label = f"{label} (tonemapped {mode.value})"
-        if source.luma_fix:
-            label = f"{label} (luma adjusted)"
+        label = label_for(source, mode, baked_el=enhancement is not None)
 
         if overlay:
             import awsmfunc as awf

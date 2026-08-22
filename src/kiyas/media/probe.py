@@ -67,6 +67,7 @@ class VideoInfo:
     color_transfer: str | None
     color_space: str | None
     dovi_profile: int | None
+    dovi_el_present: bool = False
 
     @property
     def hdr_format(self) -> HdrFormat:
@@ -87,6 +88,17 @@ class VideoInfo:
         # A file tagged BT.2020 without a PQ/HLG transfer is wide-gamut SDR.
         # Treating it as HDR would crush it; leave it alone.
         return HdrFormat.SDR
+
+    @property
+    def has_enhancement_layer(self) -> bool:
+        """Whether this is a profile 7 file whose picture is split over two layers.
+
+        Only profile 7 carries a picture-bearing enhancement layer. Profile 8
+        sets the flag to 0 and profile 5 has no second layer to speak of, so
+        asking for the profile as well as the flag keeps a mis-tagged file from
+        sending the engine looking for a layer that is not there.
+        """
+        return self.dovi_profile == 7 and self.dovi_el_present
 
     @property
     def is_wide_gamut(self) -> bool:
@@ -169,6 +181,28 @@ def _dovi_profile(stream: dict) -> int | None:
     return None
 
 
+def _dovi_el_present(stream: dict) -> bool:
+    """Whether the stream carries a Dolby Vision enhancement layer.
+
+    The same configuration record that holds the profile also holds
+    ``el_present_flag``, so this costs nothing beyond reading a second key.
+    Measured on two files from the same film: the profile 7 disc remux reports
+    ``dv_profile=7, el_present_flag=1``, the profile 8.1 WEB-DL reports
+    ``dv_profile=8, el_present_flag=0``.
+
+    The flag is set for both minimal and full enhancement layers. Telling those
+    apart needs the RPU itself, and nothing here needs to: composing a minimal
+    layer is a no-op on the picture rather than a wrong answer.
+    """
+    for side_data in stream.get("side_data_list", []) or []:
+        if "el_present_flag" in side_data:
+            try:
+                return bool(int(side_data["el_present_flag"]))
+            except (TypeError, ValueError):
+                return False
+    return False
+
+
 def probe(path: str | Path, *, ffprobe: str | Path | None = None) -> VideoInfo:
     """Inspect the first video stream of ``path``."""
     path = Path(path).expanduser()
@@ -244,4 +278,5 @@ def probe(path: str | Path, *, ffprobe: str | Path | None = None) -> VideoInfo:
         color_transfer=stream.get("color_transfer"),
         color_space=stream.get("color_space"),
         dovi_profile=_dovi_profile(stream),
+        dovi_el_present=_dovi_el_present(stream),
     )

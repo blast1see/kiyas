@@ -42,6 +42,14 @@ class Tonemap(Enum):
     NONE = "none"
 
 
+class DoviEl(Enum):
+    """What to do with a profile 7 Dolby Vision enhancement layer."""
+
+    OFF = "off"
+    AUTO = "auto"
+    ON = "on"
+
+
 class FrameMethod(Enum):
     INTERVAL = "interval"
     COUNT = "count"
@@ -167,6 +175,7 @@ class Source:
     tonemap: Tonemap = Tonemap.AUTO
     luma_fix: bool = False
     normalize_fps: bool = True
+    dovi_el: DoviEl = DoviEl.AUTO
 
     _KEYS = {
         "path",
@@ -177,6 +186,7 @@ class Source:
         "tonemap",
         "luma_fix",
         "normalize_fps",
+        "dovi_el",
     }
 
     @classmethod
@@ -204,7 +214,9 @@ class Source:
         source = cls(path=Path(raw_path.strip()).expanduser(), name=raw_name.strip())
 
         if "trim" in table:
-            source.trim = _int(table["trim"], where, "trim")
+            # No negative trims. `clip[-5:]` is valid Python and takes the last
+            # five frames of the film, which is not a comparison of anything.
+            source.trim = _int(table["trim"], where, "trim", minimum=0)
         if "crop" in table:
             source.crop = _int_tuple(  # type: ignore[assignment]
                 table["crop"], 4, where, "crop", "[left, right, top, bottom]"
@@ -220,7 +232,26 @@ class Source:
             source.luma_fix = _bool(table["luma_fix"], where, "luma_fix")
         if "normalize_fps" in table:
             source.normalize_fps = _bool(table["normalize_fps"], where, "normalize_fps")
+        if "dovi_el" in table:
+            source.dovi_el = _enum(table["dovi_el"], DoviEl, where, "dovi_el")
 
+        # The enhancement layer is composed inside the Dolby Vision tone-mapping
+        # pass -- vs-placebo takes it as an argument to that one call -- so there
+        # is no way to bake it and then tone map some other way. This is a
+        # contradiction in the file itself, so it is caught here rather than
+        # after a forty-minute extraction.
+        if source.dovi_el is DoviEl.ON and source.tonemap not in (Tonemap.AUTO, Tonemap.DOVI):
+            raise ConfigError(
+                f"{where}: dovi_el = 'on' needs tonemap = 'dovi' or 'auto', but this source "
+                f"sets tonemap = '{source.tonemap.value}'. The enhancement layer is composed "
+                f"inside the Dolby Vision tone-mapping pass, so it cannot be baked and then "
+                f"mapped some other way. Change one of the two lines."
+            )
+
+        # 'dovi_el' and 'resize' cannot both apply to the same clip either, but
+        # saying so here would reject a resized SDR source: whether the file has
+        # a layer at all is not knowable without probing it. The engine raises
+        # that one, where it knows what the file is.
         return source
 
 
@@ -234,11 +265,17 @@ class Source:
 #: - tonemap after crop, because peak-brightness detection averages over the
 #:   frame and letterbox bars drag the measured peak down, which visibly
 #:   changes the result on scope-ratio material.
+#: - dovi_el immediately before tonemap, because the two happen in one pass:
+#:   vs-placebo composes the enhancement layer inside the same Tonemap call
+#:   that maps the result, and there is no way to ask for one without the
+#:   other. It sits after crop because cropping both layers identically keeps
+#:   them aligned, and resize is refused alongside it for the opposite reason.
 PROCESSING_ORDER = (
     "normalize_fps",
     "trim",
     "resize",
     "crop",
+    "dovi_el",
     "tonemap",
     "luma_fix",
 )
@@ -654,6 +691,8 @@ def dumps(project: Project) -> str:
             lines.append("luma_fix = true")
         if not source.normalize_fps:
             lines.append("normalize_fps = false")
+        if source.dovi_el is not DoviEl.AUTO:
+            lines.append(f"dovi_el = '{source.dovi_el.value}'")
         lines.append("")
 
     if project.settings is not None:
