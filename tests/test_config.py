@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import dataclasses
 import textwrap
 
 import pytest
 
 from kiyas import config
-from kiyas.config import ConfigError, Engine, FrameMethod, Mode, Tonemap
+from kiyas.config import ConfigError, DoviEl, Engine, FrameMethod, Mode, Tonemap
 
 MINIMAL = """
 title = "Example"
@@ -307,6 +308,86 @@ def test_unknown_tool_is_rejected(tmp_path):
         config.load(path)
 
 
+def test_dovi_el_defaults_to_saying_so_rather_than_doing_it(tmp_path):
+    """Extracting an enhancement layer reads the whole file.
+
+    On a disc remux that is tens of gigabytes and tens of minutes before a
+    single screenshot appears. Doing it because a file happened to be profile 7
+    is a worse surprise than a stated caveat, so the default detects and
+    reports, and only 'on' spends the time.
+    """
+    project = config.load(write(tmp_path, MINIMAL))
+
+    assert project.sources[0].dovi_el is DoviEl.AUTO
+
+
+def test_baking_the_enhancement_layer_needs_dolby_vision_tone_mapping(tmp_path):
+    """The composition happens inside the Dolby Vision tone-mapping pass.
+
+    Caught here rather than in the engine because it is a contradiction in the
+    file itself, and the engine would only find it after the extraction.
+    """
+    path = write(
+        tmp_path,
+        """
+        [[source]]
+        path = "a.mkv"
+        name = "A"
+        dovi_el = "on"
+        tonemap = "hdr10"
+
+        [[source]]
+        path = "b.mkv"
+        name = "B"
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="dovi_el = 'on' needs tonemap"):
+        config.load(path)
+
+
+def test_baking_is_allowed_alongside_automatic_tone_mapping(tmp_path):
+    path = write(
+        tmp_path,
+        """
+        [[source]]
+        path = "a.mkv"
+        name = "A"
+        dovi_el = "on"
+
+        [[source]]
+        path = "b.mkv"
+        name = "B"
+        dovi_el = "on"
+        tonemap = "dovi"
+        """,
+    )
+
+    project = config.load(path)
+
+    assert [source.dovi_el for source in project.sources] == [DoviEl.ON, DoviEl.ON]
+
+
+def test_a_negative_trim_is_rejected(tmp_path):
+    """`clip[-5:]` is valid Python and takes the last five frames of the film."""
+    path = write(
+        tmp_path,
+        """
+        [[source]]
+        path = "a.mkv"
+        name = "A"
+        trim = -5
+
+        [[source]]
+        path = "b.mkv"
+        name = "B"
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="trim"):
+        config.load(path)
+
+
 def test_processing_order_is_documented_and_complete():
     """Every field that transforms a clip must appear in PROCESSING_ORDER.
 
@@ -314,7 +395,10 @@ def test_processing_order_is_documented_and_complete():
     applied wherever the engine happened to put it, and the difference only
     shows up as a subtly wrong screenshot.
     """
-    transforming = {"trim", "crop", "resize", "tonemap", "luma_fix", "normalize_fps"}
+    identifying = {"path", "name"}
+    transforming = {
+        field.name for field in dataclasses.fields(config.Source) if field.name not in identifying
+    }
 
     assert set(config.PROCESSING_ORDER) == transforming
 
@@ -349,6 +433,7 @@ normalize_fps = false
 [[source]]
 path = 'C:\media\b.mkv'
 name = "B"
+dovi_el = "off"
 
 [output]
 directory = "out"
