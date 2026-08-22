@@ -151,6 +151,18 @@ class FfmpegSource:
             available -= max(_ESTIMATE_MARGIN_MIN, int(available * _ESTIMATE_MARGIN))
         self.frame_count = max(0, available - source.trim)
 
+        # What comes out after crop and resize, worked out rather than measured:
+        # this engine builds a filter chain and never decodes a frame until it
+        # is asked for one, so there is nothing to read the size off.
+        width, height = info.width, info.height
+        if source.resize:
+            width, height = source.resize
+        if source.crop:
+            left, right, top, bottom = source.crop
+            width -= left + right
+            height -= top + bottom
+        self.width, self.height = max(0, width), max(0, height)
+
     # -- frame addressing ------------------------------------------------
 
     def _timestamp(self, frame: int) -> float:

@@ -113,6 +113,12 @@ class PreparedSource(Protocol):
     frame_count: int
     fps: Fraction
 
+    #: The captured picture's size, after every transformation. Two columns of
+    #: different sizes cannot be flipped between, which is the one thing a
+    #: comparison is for, so the orchestrator checks these against each other.
+    width: int
+    height: int
+
     @property
     def supports_frame_types(self) -> bool:
         """Whether :meth:`picture_type` returns real information.

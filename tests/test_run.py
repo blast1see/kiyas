@@ -348,9 +348,11 @@ def test_cli_init_then_run_is_a_complete_loop(tmp_path, capsys):
 class _Prepared:
     """A prepared source that answers only what the predicate asks."""
 
-    def __init__(self, name="A", *, combed=None, frame_count=1000):
+    def __init__(self, name="A", *, combed=None, frame_count=1000, width=1920, height=1080):
         self.name = name
         self.frame_count = frame_count
+        self.width = width
+        self.height = height
         self._combed = combed
 
     supports_frame_types = True
@@ -433,3 +435,64 @@ def test_combing_is_not_looked_at_unless_it_is_asked_for():
     if acceptable is not None:
         acceptable(100)
     assert looked == []
+
+
+# --------------------------------------------------------------------------
+# Columns that are not the same size
+# --------------------------------------------------------------------------
+
+
+def _size_warnings(prepared, mode="source"):
+    """The size complaint, if there is one, from a project in `mode`."""
+    project = _frames_project()
+    if mode == "settings":
+        project.mode = config.Mode.SETTINGS
+    warnings: list[str] = []
+    run._warn_about_sizes(prepared, project, warnings)
+    return warnings
+
+
+def test_columns_of_different_sizes_are_reported():
+    """Nothing else notices.
+
+    Every image is written, the manifest is valid, the upload succeeds -- and
+    the result is two pictures of different shapes, which cannot be flipped
+    between. Measured on a real pair: a 3840x1606 WEB-DL against a 3840x2160
+    remux, and the run had nothing to say about it.
+    """
+    warnings = _size_warnings(
+        [_Prepared("WEB-DL", width=3840, height=1606), _Prepared("Remux", width=3840, height=2160)]
+    )
+
+    assert len(warnings) == 1
+    assert "3840x1606" in warnings[0] and "3840x2160" in warnings[0]
+
+
+def test_matching_columns_say_nothing():
+    """A rule that fires when nothing is wrong is noise, and noise gets skimmed."""
+    assert _size_warnings([_Prepared("A"), _Prepared("B")]) == []
+
+
+def test_a_settings_comparison_is_exempt():
+    """Every column there is the same file at the same size."""
+    assert (
+        _size_warnings(
+            [_Prepared("bt.2390", height=1080), _Prepared("st2094-40", height=1080)],
+            mode="settings",
+        )
+        == []
+    )
+
+
+def test_the_dolby_vision_answer_is_pointed_at_rather_than_guessed():
+    """The active picture is in the RPU's level 5 offsets.
+
+    Splitting the difference looks right and is not: on a real remux the
+    arithmetic gives 277/277 and the RPU says 276, with the last row coming
+    from the other source's conformance window. A suggestion that is one row
+    out is worse than no suggestion, because it looks like an answer.
+    """
+    warnings = _size_warnings([_Prepared("A", height=1606), _Prepared("B", height=2160)])
+
+    assert "level 5" in warnings[0]
+    assert "277" not in warnings[0]

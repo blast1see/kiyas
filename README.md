@@ -187,6 +187,24 @@ Two rules are on by default and worth knowing about. **B-frames only**: I-frames
 land in different places in every encode and get a disproportionate share of the
 bitrate, so comparing them flatters the weaker encode — kiyas nudges each
 selected position forward until the frame is a B-frame *in every source*.
+**Sources have to be the same size.** Two columns of different shapes cannot be
+flipped between, and flipping between them is the one thing a comparison is
+for. A 2.40:1 WEB-DL is coded at its picture size while the disc keeps the bars
+inside a 16:9 frame, so the disc needs a `crop` to match. kiyas says so when
+they come out different rather than publishing two different shapes.
+
+It does not suggest the numbers, because the obvious arithmetic is wrong:
+splitting the difference on a real pair gives 277 rows top and bottom where the
+source's own Dolby Vision metadata says 276, and the remaining row comes from
+the other release's conformance window. On a DV source the active picture is in
+the RPU's level 5 offsets:
+
+```powershell
+ffmpeg -v error -i film.mkv -map 0:v:0 -c:v copy -bsf:v hevc_mp4toannexb -f hevc - |
+  dovi_tool extract-rpu - -o rpu.bin
+dovi_tool info -i rpu.bin -f 100      # active_area_top_offset / _bottom_offset
+```
+
 **Skip dark**: a frame that is essentially black compares nothing. Brightness is
 measured over the centre of the picture so letterbox bars do not skew it.
 

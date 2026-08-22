@@ -144,6 +144,36 @@ def columns(project: Project) -> list[tuple[Source, RenderSettings | None]]:
     ]
 
 
+def _warn_about_sizes(prepared: list, project: Project, warnings: list[str]) -> None:
+    """Complain if the columns are not the same size.
+
+    Columns that are not the same size cannot be flipped between, and flipping
+    between them is the one thing a comparison is for. Nothing else notices:
+    every image is written, the manifest is valid, the upload succeeds, and the
+    result is two pictures of different shapes.
+
+    Settings mode is exempt because every column there is the same file
+    rendered the same size, so there is nothing to disagree.
+
+    No suggested numbers. Splitting the difference looks right and is not:
+    measured on a real pair, the arithmetic gives 277 rows top and bottom where
+    the source's own Dolby Vision metadata says 276, and the last row comes
+    from the other release's conformance window. A suggestion that is one row
+    out is worse than none, because it looks like an answer.
+    """
+    if project.mode is Mode.SETTINGS:
+        return
+    sizes = {(item.width, item.height) for item in prepared if item.width and item.height}
+    if len(sizes) <= 1:
+        return
+    listed = ", ".join(f"{item.name} {item.width}x{item.height}" for item in prepared)
+    warnings.append(
+        f"the sources are not the same size ({listed}), so the comparison cannot be flipped "
+        f"between. Crop or resize them to match -- on a Dolby Vision source the active picture "
+        f"is in the RPU's level 5 offsets, not something to guess from the black bars."
+    )
+
+
 def _acceptability(prepared: list, project: Project, warnings: list[str]):
     """Build the predicate the frame selector nudges against.
 
@@ -378,6 +408,15 @@ def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:
             frames = selector.select(project.frames, total, target_fps)
         except selector.SelectionError as exc:
             raise RunError(str(exc)) from exc
+
+        # Columns that are not the same size cannot be flipped between, and
+        # flipping between them is the one thing a comparison is for. Nothing
+        # else notices: every image is written, the manifest is valid, the
+        # upload succeeds, and the result is two pictures of different shapes.
+        #
+        # Settings mode is exempt because every column there is the same file
+        # rendered the same size, so there is nothing to disagree.
+        _warn_about_sizes(prepared, project, warnings)
 
         # In a settings comparison every column is the same file, so asking all
         # of them whether a frame is usable would run the same ffprobe once per
