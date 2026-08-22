@@ -179,6 +179,7 @@ def _decoder(track: AudioTrack, ffmpeg: Path) -> subprocess.Popen:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
+            creationflags=binaries.no_window_flag(),
         )
     except OSError as exc:
         raise AnalysisError(f"could not start ffmpeg: {exc}") from exc

@@ -96,6 +96,7 @@ def _render_channel_tiles(track: AudioTrack, directory: Path, *, ffmpeg: Path) -
             encoding="utf-8",
             errors="replace",
             stdin=subprocess.DEVNULL,
+            creationflags=binaries.no_window_flag(),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise AnalysisError(f"could not render a spectrogram of {track.path.name}: {exc}") from exc

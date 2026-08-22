@@ -265,6 +265,7 @@ def _ffmpeg_filters(path: Path) -> set[str]:
             encoding="utf-8",
             errors="replace",
             stdin=subprocess.DEVNULL,
+            creationflags=binaries.no_window_flag(),
         )
     except (OSError, subprocess.SubprocessError):
         return set()
@@ -342,6 +343,7 @@ def _mpv_banner(path: Path) -> str:
             encoding="utf-8",
             errors="replace",
             stdin=subprocess.DEVNULL,
+            creationflags=binaries.no_window_flag(),
         )
     except (OSError, subprocess.SubprocessError):
         return ""

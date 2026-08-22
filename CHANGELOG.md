@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.14
+
+### No more console windows — this time all of them
+
+0.1.13 stopped mpv opening a console and said, on the strength of a
+measurement, that ffmpeg did not need the same treatment. That was wrong, and
+wrong in a way worth writing down: a console window belongs to *conhost.exe*,
+not to the process that owns the console. Enumerating ffmpeg's own windows
+found none, so the conclusion was that there were none.
+
+Measured properly — watching every 20 ms for console windows that were not
+there before — one three-frame comparison from a windowed process put up **176
+console windows**. With the flag: **none**. At the twelve frames a real
+comparison uses, that is closer to seven hundred.
+
+Every subprocess in kiyas now passes `CREATE_NO_WINDOW`, and a test walks the
+source to keep it that way, because this failure is invisible from inside: the
+run succeeds, the pictures are right, and the only symptom is on the screen.
+
+The single exception is `kiyas setup`, which inherits the console on purpose so
+that pip's progress is visible. It is unreachable from a windowed build, which
+refuses to run setup at all.
+
 ## 0.1.13
 
 ### mpv no longer opens a console window per column
