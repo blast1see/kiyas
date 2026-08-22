@@ -330,3 +330,106 @@ def test_cli_init_then_run_is_a_complete_loop(tmp_path, capsys):
     # rather than crash.
     assert cli.main(["run", str(path)]) == 1
     assert "do not exist" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# Comb detection wiring
+#
+# Whether VFM actually finds combs is not testable here: it works on
+# photographic content and reads the hard horizontal edges of ffmpeg's
+# synthetic sources as combing -- measured, 20 progressive frames out of 20
+# flagged on `testsrc2` and `mandelbrot`, against none on a real film clip and
+# its interlaced copy. So the detector is checked by hand against real
+# material, the way frame accuracy and tonemapping are, and what is pinned
+# down here is everything around it.
+# --------------------------------------------------------------------------
+
+
+class _Prepared:
+    """A prepared source that answers only what the predicate asks."""
+
+    def __init__(self, name="A", *, combed=None, frame_count=1000):
+        self.name = name
+        self.frame_count = frame_count
+        self._combed = combed
+
+    supports_frame_types = True
+    has_b_frames = True
+
+    def picture_type(self, frame):
+        return "B"
+
+    def mean_luma(self, frame):
+        return 0.5
+
+    def combed(self, frame):
+        return self._combed
+
+
+def _frames_project(**frames):
+    text = "\n".join(f"{key} = {value}" for key, value in frames.items())
+    data = f"""
+        [frames]
+        {text}
+
+        [[source]]
+        path = "a.mkv"
+        name = "A"
+
+        [[source]]
+        path = "b.mkv"
+        name = "B"
+    """
+    return config.parse(__import__("tomllib").loads(textwrap.dedent(data)))
+
+
+def test_a_combed_frame_is_rejected_when_asked_for():
+    project = _frames_project(skip_combed="true")
+    warnings: list[str] = []
+
+    acceptable = run._acceptability([_Prepared(combed=True)], project, warnings)
+
+    assert acceptable is not None
+    assert acceptable(100) is False
+    assert warnings == []
+
+
+def test_a_clean_frame_passes():
+    project = _frames_project(skip_combed="true")
+
+    acceptable = run._acceptability([_Prepared(combed=False)], project, [])
+
+    assert acceptable(100) is True
+
+
+def test_an_engine_that_cannot_tell_turns_the_rule_off_and_says_so():
+    """`None` means "cannot answer", not "clean".
+
+    Reporting every frame as clean would be the silent version of this: the
+    rule would look active and reject nothing, which is worse than saying it
+    is off.
+    """
+    project = _frames_project(skip_combed="true")
+    warnings: list[str] = []
+
+    acceptable = run._acceptability([_Prepared(combed=None)], project, warnings)
+
+    assert len(warnings) == 1
+    assert "comb detection is off" in warnings[0]
+    assert acceptable is None or acceptable(100) is True
+
+
+def test_combing_is_not_looked_at_unless_it_is_asked_for():
+    """It costs a full-resolution 8-bit conversion per frame."""
+    looked: list[int] = []
+
+    class _Counting(_Prepared):
+        def combed(self, frame):
+            looked.append(frame)
+            return True
+
+    acceptable = run._acceptability([_Counting()], _frames_project(skip_combed="false"), [])
+
+    if acceptable is not None:
+        acceptable(100)
+    assert looked == []

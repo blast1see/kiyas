@@ -364,6 +364,17 @@ because a tone curve is monotonic: it moves every value and reorders none.
   confidence comes from the wide search, because "is this peak distinctive
   against the rest of the film" is a question a narrow window cannot answer.
 
+- **VFM reads hard horizontal detail as combing, so comb detection cannot be
+  tested on synthetic media.** Measured on a real film clip and an interlaced
+  copy of itself, 30 frames each: cthresh 6 caught 28 combed frames and 9
+  caught 19, and neither flagged a single frame of the progressive original.
+  Measured on `testsrc2` and `mandelbrot`: **20 progressive frames out of 20**
+  flagged at both thresholds, and a rotating `smptebars` produced no detection
+  at all in either direction. So the detector belongs to the by-hand sweep
+  alongside frame accuracy and tonemapping, and `tests/test_run.py` pins down
+  the wiring instead. It is off by default for the same reason -- animation
+  has hard edges too.
+
 - **ffmpeg's default pacing silently rewrites a run of frames.** Asking for
   N consecutive frames and getting N frames back does not mean they are the
   ones asked for: without `-fps_mode passthrough` ffmpeg fits the output to a

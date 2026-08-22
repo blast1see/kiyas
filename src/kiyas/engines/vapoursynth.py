@@ -132,6 +132,24 @@ _PRIMARIES_BT2020 = 9
 #: B-frames. A GOP is a few dozen frames, so this covers more than one.
 _B_FRAME_PROBE = 96
 
+#: How hard VFM looks for combs, and why this is not its default of 9.
+#:
+#: It is a rejection rule, so a false positive throws away a good frame while
+#: a false negative merely lets one through -- the conservative direction is
+#: fewer positives. Measured on a real 480p film clip and the interlaced copy
+#: of itself, 30 frames each: at cthresh 6 it caught 28 of 30 combed frames,
+#: at 9 it caught 19, and at both it flagged **none** of the progressive
+#: original. What decided it is the other end -- on ffmpeg's `testsrc2`, whose
+#: hard horizontal edges look exactly like combing, cthresh 9 flagged 20
+#: progressive frames out of 20. Real film is not testsrc2, but animation has
+#: hard edges too, and that is why this rule is off unless it is asked for.
+_COMB_THRESHOLD = 9
+
+#: VFM needs a field order and this is a detector, not a field matcher. It
+#: barely matters: on the clip above, order 0 and order 1 differed by at most
+#: one frame in thirty at every threshold tried.
+_COMB_FIELD_ORDER = 1
+
 #: PNG is lossless at every setting, so this only trades file size against
 #: time. 1 is awsmfunc's default and produces files small enough to upload
 #: without making a 4K capture noticeably slow.
@@ -161,6 +179,7 @@ class VapourSynthSource:
         self._clip = clip
         self._stats = None
         self._small = None
+        self._combed = None
         self._has_b_frames: bool | None = None
         self._overlay = overlay
         self.name = name
@@ -199,6 +218,30 @@ class VapourSynthSource:
         if isinstance(pict_type, bytes):
             pict_type = pict_type.decode("ascii", "replace")
         return str(pict_type) if pict_type else None
+
+    def combed(self, frame: int) -> bool | None:
+        """Whether ``frame`` shows interlacing combs.
+
+        VFM is a field matcher rather than a comb detector, and its ``_Combed``
+        prop means "the match it settled on still looks combed". That is the
+        answer wanted here, but only once it is given something it can work
+        with: it takes 8-bit YUV only, and the conversion has to be
+        depth-only. Combing is a pattern between adjacent *lines*, so scaling
+        the picture down to look for it would remove the thing being looked
+        for.
+        """
+        if not 0 <= frame < self.frame_count:
+            return None
+        if self._combed is None:
+            import vapoursynth as vs
+
+            self._combed = vs.core.vivtc.VFM(
+                self._clip.resize.Point(format=vs.YUV420P8),
+                order=_COMB_FIELD_ORDER,
+                cthresh=_COMB_THRESHOLD,
+                mode=0,
+            )
+        return bool(self._combed.get_frame(frame).props.get("_Combed", 0))
 
     def mean_luma(self, frame: int) -> float:
         """Average luma of the active picture area, in [0, 1].

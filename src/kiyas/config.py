@@ -293,6 +293,7 @@ class FrameSelection:
     skip_dark: bool = True
     dark: int = 0
     light: int = 0
+    skip_combed: bool = False
     seed: int | None = None
 
     _KEYS = {
@@ -306,6 +307,7 @@ class FrameSelection:
         "skip_dark",
         "dark",
         "light",
+        "skip_combed",
         "seed",
     }
 
@@ -348,6 +350,8 @@ class FrameSelection:
             selection.dark = _int(table["dark"], where, "dark", minimum=0)
         if "light" in table:
             selection.light = _int(table["light"], where, "light", minimum=0)
+        if "skip_combed" in table:
+            selection.skip_combed = _bool(table["skip_combed"], where, "skip_combed")
         if "seed" in table:
             selection.seed = _int(table["seed"], where, "seed")
 
@@ -683,6 +687,8 @@ def dumps(project: Project) -> str:
         lines.append(f"dark = {frames.dark}")
     if frames.light:
         lines.append(f"light = {frames.light}")
+    if frames.skip_combed:
+        lines.append("skip_combed = true")
     if frames.seed is not None:
         lines.append(f"seed = {frames.seed}")
     lines.append("")

@@ -150,6 +150,16 @@ class PreparedSource(Protocol):
         """``I``, ``P``, ``B``, or ``None`` when it cannot be read."""
         ...
 
+    def combed(self, frame: int) -> bool | None:
+        """Whether the frame shows interlacing combs, or ``None`` if unknown.
+
+        ``None`` rather than ``False`` where an engine cannot tell, so the
+        orchestrator can say the rule is off instead of quietly reporting every
+        frame as clean -- the same distinction :attr:`supports_frame_types`
+        draws, and for the same reason.
+        """
+        ...
+
     def mean_luma(self, frame: int) -> float:
         """Average luma in [0, 1]."""
         ...

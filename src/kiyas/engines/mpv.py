@@ -100,6 +100,9 @@ class MpvSource:
     def luma_thumbnails(self, start: int, count: int, step: int = 1) -> list[bytes]:
         return self._measure.luma_thumbnails(start, count, step)
 
+    def combed(self, frame: int) -> bool | None:
+        return self._measure.combed(frame)
+
     def mean_luma(self, frame: int) -> float:
         return self._measure.mean_luma(frame)
 
