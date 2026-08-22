@@ -24,7 +24,9 @@ from . import engines
 from .config import Engine, FrameMethod, FrameSelection, Mode, Project, Source
 from .engines.base import DARK_LUMA_THRESHOLD, EngineError, RenderSettings
 from .frames import align, selector
-from .media.probe import probe
+from .media import rpu
+from .media.binaries import BinaryNotFound
+from .media.probe import ProbeError, probe
 
 MANIFEST_NAME = "kiyas-manifest.json"
 
@@ -144,7 +146,7 @@ def columns(project: Project) -> list[tuple[Source, RenderSettings | None]]:
     ]
 
 
-def _warn_about_sizes(prepared: list, project: Project, warnings: list[str]) -> None:
+def _warn_about_sizes(prepared: list, project: Project, warnings: list[str], **advice) -> None:
     """Complain if the columns are not the same size.
 
     Columns that are not the same size cannot be flipped between, and flipping
@@ -155,11 +157,12 @@ def _warn_about_sizes(prepared: list, project: Project, warnings: list[str]) -> 
     Settings mode is exempt because every column there is the same file
     rendered the same size, so there is nothing to disagree.
 
-    No suggested numbers. Splitting the difference looks right and is not:
-    measured on a real pair, the arithmetic gives 277 rows top and bottom where
-    the source's own Dolby Vision metadata says 276, and the last row comes
-    from the other release's conformance window. A suggestion that is one row
-    out is worse than none, because it looks like an answer.
+    The numbers are never guessed from the picture. Splitting the difference
+    looks right and is not: measured on a real pair, the arithmetic gives 277
+    rows top and bottom where the source's own Dolby Vision metadata says 276.
+    So the offsets are read out of the RPU, which is the only place they are
+    stated, and when they cannot be read the message says less rather than
+    inventing them.
     """
     if project.mode is Mode.SETTINGS:
         return
@@ -167,10 +170,102 @@ def _warn_about_sizes(prepared: list, project: Project, warnings: list[str]) -> 
     if len(sizes) <= 1:
         return
     listed = ", ".join(f"{item.name} {item.width}x{item.height}" for item in prepared)
-    warnings.append(
+    message = (
         f"the sources are not the same size ({listed}), so the comparison cannot be flipped "
         f"between. Crop or resize them to match -- on a Dolby Vision source the active picture "
         f"is in the RPU's level 5 offsets, not something to guess from the black bars."
+    )
+    for note in _active_area_advice(prepared, project, **advice):
+        message += " " + note
+    warnings.append(message)
+
+
+def _active_area_advice(
+    prepared: list,
+    project: Project,
+    *,
+    inspect=probe,
+    read=rpu.sample,
+) -> list[str]:
+    """What each source's own Dolby Vision metadata says about where its picture is.
+
+    This is the part of the size warning that can be pasted into a project
+    file, and it is worth the second or so it costs: reading it by hand means
+    extracting an RPU and knowing which of dovi_tool's outputs to look at.
+
+    Sources that already carry a crop or a resize are skipped. The offsets
+    describe the frame as encoded, so against a source that has already been
+    transformed they would be an answer to a different question.
+    """
+    advice: list[str] = []
+    for item, source in zip(prepared, project.sources, strict=False):
+        if source.crop or source.resize or not (item.width and item.height):
+            continue
+        try:
+            info = inspect(source.path, ffprobe=project.tools.get("ffprobe"))
+            if info.dovi_profile is None:
+                continue
+            duration = item.frame_count / float(item.fps) if item.fps else 0.0
+            reading = read(
+                source.path,
+                duration=duration,
+                ffmpeg=project.tools.get("ffmpeg"),
+                dovi_tool=project.tools.get("dovi_tool"),
+            )
+        except (rpu.ActiveAreaError, BinaryNotFound, ProbeError, OSError):
+            # Enriching a warning is not worth failing a run that has already
+            # written its images. Without dovi_tool, or on an RPU that will not
+            # parse, the sentence above still says where to look.
+            continue
+        advice.append(_describe_active_area(item, prepared, reading))
+    return [note for note in advice if note]
+
+
+def _describe_active_area(item, prepared: list, reading: rpu.Reading) -> str:
+    """One sentence about one source's active area."""
+    if reading.varies:
+        return (
+            f"{item.name}'s picture changes shape as the film plays "
+            f"({len(reading.shapes)} shapes across {reading.positions} positions read), "
+            f"so no single crop fits it."
+        )
+    area = reading.fixed
+    if area is None or area.is_whole_frame:
+        # Nothing to paste and nothing to do: this source has no bars to take
+        # off. Saying so would lengthen an already long warning with the one
+        # sentence in it that carries no number.
+        return ""
+
+    width, height = area.size_within(item.width, item.height)
+    line = (
+        f"{item.name}'s own Dolby Vision metadata puts the picture at "
+        f"crop = {list(area.as_crop())}, which leaves {width}x{height}"
+    )
+
+    others = {
+        (p.width, p.height): p.name for p in prepared if p is not item and p.width and p.height
+    }
+    if (width, height) in others:
+        return line + " and matches the others."
+    if len(others) != 1:
+        return line + "."
+    ((other_width, other_height), other_name) = next(iter(others.items()))
+    # Two releases can disagree with the master and with each other: an iTunes
+    # WEB-DL of a scope film measured 1606 rows where the disc's own RPU says
+    # 1608. Saying which way and by how much is the difference between a number
+    # that can be adjusted and one that just looks wrong.
+    gaps = []
+    if height != other_height:
+        gaps.append(
+            f"{abs(height - other_height)} rows {'taller' if height > other_height else 'shorter'}"
+        )
+    if width != other_width:
+        gaps.append(
+            f"{abs(width - other_width)} columns {'wider' if width > other_width else 'narrower'}"
+        )
+    return (
+        line + f" -- still {' and '.join(gaps)} than {other_name} ({other_width}x{other_height}), "
+        f"which was cropped to something other than the master's active area."
     )
 
 

@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import subprocess
 import textwrap
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
 
 from kiyas import config, engines, run
 from kiyas.config import Engine, Project
-from kiyas.media import binaries
+from kiyas.media import binaries, rpu
 from kiyas.run import RunError, safe_directory_name
 
 # --------------------------------------------------------------------------
@@ -353,6 +354,9 @@ class _Prepared:
         self.frame_count = frame_count
         self.width = width
         self.height = height
+        # Part of the protocol, and the size warning divides by it to work out
+        # where along the film to read metadata.
+        self.fps = Fraction(24000, 1001)
         self._combed = combed
 
     supports_frame_types = True
@@ -496,3 +500,195 @@ def test_the_dolby_vision_answer_is_pointed_at_rather_than_guessed():
 
     assert "level 5" in warnings[0]
     assert "277" not in warnings[0]
+
+
+# --------------------------------------------------------------------------
+# What the size warning reads out of the Dolby Vision metadata
+#
+# The offsets are never guessed from the picture: cropdetect finds no bars on a
+# PQ source, and splitting the difference arithmetically came out 277 where the
+# file's own metadata says 276. So the numbers come from the RPU, and these
+# tests are about what the sentence does with them.
+# --------------------------------------------------------------------------
+
+
+class _Dolby:
+    """A probe result for a source that carries Dolby Vision."""
+
+    def __init__(self, profile=7):
+        self.dovi_profile = profile
+
+
+def _advised(prepared, reading, *, profile=7, on="b.mkv", project=None):
+    """The size complaint, with only the source at `on` carrying an active area.
+
+    Answering the same offsets for every source is the unrealistic case: the
+    release that was already cropped has no level 5 at all. Giving both the
+    same reading produced a second, nonsensical suggestion, which is worth
+    keeping out of the fixture rather than out of the assertions.
+    """
+    project = project or _frames_project()
+    absent = rpu.Reading(shapes=(), positions=reading.positions, carrying=0)
+    warnings: list[str] = []
+    run._warn_about_sizes(
+        prepared,
+        project,
+        warnings,
+        inspect=lambda *args, **kwargs: _Dolby(profile),
+        read=lambda path, **kwargs: reading if Path(path).name == on else absent,
+    )
+    return warnings[0] if warnings else ""
+
+
+def _fixed(top, bottom, positions=5):
+    return rpu.Reading(
+        shapes=(rpu.ActiveArea(0, 0, top, bottom),), positions=positions, carrying=positions
+    )
+
+
+def test_the_warning_prints_the_crop_the_metadata_asks_for():
+    """The line has to be pasteable, in the order a project file writes crop.
+
+    Reading it by hand means extracting an RPU and knowing which of dovi_tool's
+    outputs to look at, which is exactly the work worth not repeating.
+    """
+    message = _advised(
+        [_Prepared("WEB-DL", width=3840, height=1608), _Prepared("Remux", width=3840, height=2160)],
+        _fixed(276, 276),
+    )
+
+    assert "crop = [0, 0, 276, 276]" in message
+    assert "3840x1608" in message
+    assert "matches the others" in message
+
+
+def test_a_crop_that_still_does_not_match_says_so_and_by_how_much():
+    """Measured on the pair this was built against.
+
+    The disc's own RPU says 276 rows top and bottom, leaving 1608, while the
+    iTunes WEB-DL of the same film is 1606. Neither number is wrong; the
+    releases disagree. Printing the crop and stopping would leave the reader
+    wondering why the warning fired again.
+    """
+    message = _advised(
+        [_Prepared("WEB-DL", width=3840, height=1606), _Prepared("Remux", width=3840, height=2160)],
+        _fixed(276, 276),
+    )
+
+    assert "crop = [0, 0, 276, 276]" in message
+    assert "2 rows taller" in message
+    assert "WEB-DL" in message.split("still")[1]
+
+
+def test_a_film_that_changes_shape_gets_no_crop_suggested():
+    """An IMAX sequence opens the frame out and closes it again.
+
+    There is no single crop for that, and one read from inside either stretch
+    looks perfectly constant -- which is why several are read.
+    """
+    changing = rpu.Reading(
+        shapes=(rpu.ActiveArea(0, 0, 276, 276), rpu.ActiveArea(0, 0, 0, 0)),
+        positions=5,
+        carrying=5,
+    )
+
+    message = _advised(
+        [_Prepared("WEB-DL", width=3840, height=1606), _Prepared("Remux", width=3840, height=2160)],
+        changing,
+    )
+
+    assert "changes shape" in message
+    assert "crop = [" not in message
+
+
+def test_a_source_with_no_level_5_adds_nothing_to_the_warning():
+    """A release cropped to its own picture has no bars to mask.
+
+    There is no number to paste, so the sentence would be the only one in a
+    long warning carrying no number.
+    """
+    message = _advised(
+        [_Prepared("WEB-DL", width=3840, height=1606), _Prepared("Remux", width=3840, height=2160)],
+        rpu.Reading(shapes=(), positions=5, carrying=0),
+    )
+
+    assert "not the same size" in message
+    assert "crop = [" not in message
+
+
+def test_a_source_that_is_not_dolby_vision_is_never_read():
+    read: list[object] = []
+
+    project = _frames_project()
+    warnings: list[str] = []
+    run._warn_about_sizes(
+        [_Prepared("A", width=1920, height=1080), _Prepared("B", width=1920, height=800)],
+        project,
+        warnings,
+        inspect=lambda *args, **kwargs: _Dolby(None),
+        read=lambda *args, **kwargs: read.append(1) or _fixed(276, 276),
+    )
+
+    assert read == [], "an RPU was extracted from a file that has none"
+
+
+def test_a_source_that_is_already_cropped_is_not_advised_about():
+    """The offsets describe the frame as encoded.
+
+    Against a source that has already been transformed they answer a different
+    question, and the answer would look authoritative.
+    """
+    read: list[object] = []
+    project = _frames_project()
+    project.sources[0].crop = (0, 0, 276, 276)
+    project.sources[1].crop = (0, 0, 100, 100)
+
+    warnings: list[str] = []
+    run._warn_about_sizes(
+        [_Prepared("A", width=3840, height=1608), _Prepared("B", width=3840, height=1960)],
+        project,
+        warnings,
+        inspect=lambda *args, **kwargs: _Dolby(7),
+        read=lambda *args, **kwargs: read.append(1) or _fixed(276, 276),
+    )
+
+    assert read == []
+    assert "not the same size" in warnings[0]
+
+
+def test_the_warning_survives_a_machine_with_no_dovi_tool():
+    """Enriching a message is not worth failing a run that wrote its images."""
+
+    def _missing(*args, **kwargs):
+        raise binaries.BinaryNotFound("dovi_tool was not found")
+
+    project = _frames_project()
+    warnings: list[str] = []
+    run._warn_about_sizes(
+        [_Prepared("A", width=3840, height=1606), _Prepared("B", width=3840, height=2160)],
+        project,
+        warnings,
+        inspect=lambda *args, **kwargs: _Dolby(7),
+        read=_missing,
+    )
+
+    assert len(warnings) == 1
+    assert "not the same size" in warnings[0]
+
+
+def test_an_unreadable_rpu_does_not_fail_the_run():
+    def _broken(*args, **kwargs):
+        raise rpu.ActiveAreaError("the RPU did not parse as JSON")
+
+    project = _frames_project()
+    warnings: list[str] = []
+    run._warn_about_sizes(
+        [_Prepared("A", width=3840, height=1606), _Prepared("B", width=3840, height=2160)],
+        project,
+        warnings,
+        inspect=lambda *args, **kwargs: _Dolby(7),
+        read=_broken,
+    )
+
+    assert len(warnings) == 1
+    assert "crop = [" not in warnings[0]

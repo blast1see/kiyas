@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.1.12
+
+### The size warning now says which crop to use
+
+Two columns of different shapes cannot be flipped between, and 0.1.9 started
+saying so. It stopped short of the useful part: it told you the active picture
+was in the Dolby Vision RPU's level 5 offsets and left you to go and extract an
+RPU yourself.
+
+It now reads them. When the sources are not the same size and one of them
+carries Dolby Vision, the warning carries the line to paste —
+`crop = [0, 0, 276, 276]` — and the size that leaves.
+
+It costs about a second. `dovi_tool extract-rpu --limit` stops after a handful
+of frames and closes the pipe, so a 78 GB remux is sampled in 0.2 seconds per
+position and never read through.
+
+Three things it refuses to do:
+
+- **Guess.** If dovi_tool is missing, or the RPU will not parse, the warning
+  is the one 0.1.9 printed. Enriching a message is not worth failing a run that
+  has already written its images.
+- **Answer from one place in the film.** A title with an IMAX sequence changes
+  shape as it plays, and a reading taken inside either stretch looks perfectly
+  constant. Five positions spread across the film are read; if they disagree
+  the warning says the picture changes shape and suggests no crop at all.
+- **Make the numbers match.** Measured on the pair this was built against: the
+  disc's own metadata says 276 rows top and bottom, leaving 1608, while the
+  iTunes WEB-DL of the same film is 1606. The warning prints the crop the
+  metadata asks for and then says it is still two rows taller than the other
+  release. Moving those two rows to the bottom edge would make the sizes agree
+  by inventing a framing nobody chose.
+
+Sources that already carry a `crop` or a `resize` are skipped: the offsets
+describe the frame as encoded, so against a transformed source they answer a
+different question.
+
 ## 0.1.11
 
 ### The VapourSynth engine could not run from the window at all
