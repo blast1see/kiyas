@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.1.5
+
+### Dolby Vision profile 7 is composed instead of advertised
+
+`dovi_tool` has been registered in `media/binaries.py`, reported by `doctor` as
+"Dolby Vision enhancement layer" and accepted in `[tools]` since the tool
+existed, and never once invoked. A profile 7 release carries its picture in two
+layers; kiyas captured the base layer and said nothing about it, so a
+comparison of two P7 sources showed neither what a Dolby Vision player renders
+nor anything a viewer ever sees.
+
+`dovi_el = "on"` composes it. The default, `auto`, detects the layer and says
+so in the run's warnings without composing it — extracting it reads the whole
+file, and doing that unasked is a worse surprise than a stated caveat. Measured
+on a 78 GB profile 7 remux: 10.3 minutes, and a 4.64 GB layer that is kept and
+reused.
+
+vs-placebo does the composition and kiyas already depended on it, so this is
+one keyword argument on a call the Dolby Vision branch already made.
+`awsmfunc`'s `MapDolbyVision` is not used: the version PyPI has hard-fails
+without `vs-nlq`, which has no distribution under any name and would have to be
+built with cargo.
+
+### The ffmpeg engine labels frames
+
+The packaged build ships ffmpeg and mpv only, so every screenshot from a
+release build came out unlabelled while a checkout labelled them. The blocker
+was that `drawtext` needs a font by path and there is no portable one, so kiyas
+now carries DejaVu Sans, unmodified, with its licence beside it.
+
+The label text goes through a file rather than the `text=` option, because that
+option cannot be escaped reliably: an apostrophe has no working form once any
+escaped colon follows it, and "Director's Cut" plus "Picture type: B" in one
+label is an ordinary thing to want.
+
+### `kiyas align` measures what `trim` was guessing
+
+The audio side has always measured how far apart two tracks are. The picture
+side had `trim`, set by hand, and nothing that checked it — and a wrong trim
+is wrong in every frame while every frame still looks like a frame.
+
+`kiyas align project.toml` reports how far each source is from the first and
+prints the `trim` lines to paste in; `kiyas run --check-sync` does it as part
+of a run. The sign is stated and tested: positive means the source plays later.
+
+Confidence is agreement between sampled positions rather than the audio
+module's peak-to-floor ratio. That was tried first and does not transfer:
+measured on a real 4K feature, a *correct* alignment scored 3.5 and two
+completely different films scored 3.1. Agreement separates the same three
+cases cleanly: an aligned pair 9 of 9, a deliberately mistrimmed pair 8 of 9
+with the offset recovered exactly, two different films 1 of 9.
+
+### Also
+
+- `trim` no longer accepts negative numbers. `clip[-5:]` is valid Python and
+  takes the last five frames of the film.
+- Both engines build the burnt-in label with the same function, so a
+  comparison cannot have columns worded two different ways.
+- `doctor` reports whether ffmpeg has `drawtext` and whether the label font is
+  present, because both decide whether the output has labels on it.
+
 ## 0.1.4
 
 ### A second place to publish
