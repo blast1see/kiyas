@@ -72,7 +72,24 @@ jobs:
         if: runner.os == 'Windows'
         # ffmpeg-full, not ffmpeg: the tonemap chain needs zscale, which the
         # essentials build leaves out.
-        run: choco install ffmpeg-full -y --no-progress
+        #
+        # Verified rather than trusted. `choco install` exits 0 when the
+        # community feed refuses it -- observed on 2026-08-31, a 503 that
+        # installed "0/0 packages" and reported success. The run then failed
+        # three steps later at `kiyas doctor` with "no frame engine is
+        # available", which reads as a bug in kiyas rather than as a package
+        # feed being down. Retried once because that outage was transient, then
+        # proved by running the thing.
+        shell: pwsh
+        run: |
+          choco install ffmpeg-full -y --no-progress
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            Write-Host "first attempt did not put ffmpeg on PATH; retrying"
+            Start-Sleep -Seconds 30
+            choco install ffmpeg-full -y --no-progress --force
+          }
+          ffmpeg -version
+          ffprobe -version
 
       - run: pip install -e ".[dev,audio,gui]"
 
