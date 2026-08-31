@@ -1,4 +1,8 @@
-"""Reading a refused HTTP response, for any host kiyas publishes to.
+"""Shared machinery for talking to a publishing host, whichever one it is.
+
+Two jobs live here, both of them the same job on every backend.
+
+**Reading a refused response.**
 
 Both publishing targets sit behind Cloudflare, and a Cloudflare refusal looks
 nothing like an API error: the body is an HTML interstitial about browsers and
@@ -6,11 +10,22 @@ JavaScript, and quoting it verbatim hands someone six hundred characters of
 markup describing a problem they do not have. Telling the two apart is the same
 job whichever host is being talked to, so it lives here and takes the host name
 as an argument rather than being written twice.
+
+**Pacing, backoff and timeouts.** How fast a burst of uploads is allowed to
+start, how long to wait after being refused, and how long one image body is
+given, are properties of pushing a few dozen multi-megabyte PNGs down one
+uplink -- not of any particular host. They were written twice and were
+byte-identical both times; a third backend is what made copying them a third
+time obviously wrong. The numbers that *are* host-specific -- how many workers,
+how many attempts, how far apart -- stay in the backend that measured them.
 """
 
 from __future__ import annotations
 
+import random
 import re
+import threading
+import time
 
 #: How much of a failed response to quote back. Enough for a JSON field error,
 #: short of an HTML error page.
@@ -137,3 +152,78 @@ def edge_block(response, *, host: str) -> str:
 def explain(response, *, host: str) -> str:
     """Why a request was refused: the edge's reason if it was the edge, else the body."""
     return edge_block(response, host=host) or _server_said(response)
+
+
+# ---------------------------------------------------------------------------
+# Pacing, backoff and timeouts
+# ---------------------------------------------------------------------------
+
+#: Ceiling for the retry backoff. Without one, exponential growth puts the last
+#: attempt minutes away and the run looks hung.
+MAX_BACKOFF = 30.0
+
+
+def upload_timeout(size_bytes: int) -> float:
+    """Seconds to allow for one image, sized to the image.
+
+    One constant used to cover both the small API calls and the image bodies,
+    and thirty seconds is generous for the first and hopeless for the second.
+    Measured on a real comparison: 24 screenshots of about 6 MB each, nine of
+    them lost to "the write operation timed out".
+
+    The arithmetic that matters is the parallelism. Six uploads share one
+    uplink, so each gets roughly a sixth of it, and a 6 MB image at a sixth of
+    a modest home connection is already at thirty seconds before anything goes
+    wrong. This allows about 34 kB/s per stream -- slow, but a slow link should
+    finish rather than fail, because failing costs the whole run.
+    """
+    return max(90.0, 30.0 * size_bytes / 1_000_000)
+
+
+def backoff(attempt: int, *, ceiling: float = MAX_BACKOFF) -> float:
+    """Seconds to wait before retry ``attempt``, growing and jittered.
+
+    Jitter matters more than the growth. Workers that hit the same rate limit
+    at the same moment will, with a fixed delay, wake up together and reproduce
+    the burst that caused it. The random half spreads them out.
+    """
+    bound = min(ceiling, 2.0 * 2**attempt)
+    return bound * (0.5 + random.random() / 2)
+
+
+def retry_after(header: str | None, attempt: int, *, ceiling: float = MAX_BACKOFF) -> float:
+    """Honour the server's Retry-After, falling back to a linear backoff."""
+    try:
+        return max(1.0, float(header))
+    except (TypeError, ValueError):
+        return backoff(attempt, ceiling=ceiling)
+
+
+class Pacer:
+    """Keeps request starts a minimum interval apart, across every worker.
+
+    The thread pool limits how many uploads run at once; this limits how fast
+    they are allowed to *begin*. Those are different things, and only the
+    second one is visible to the server as a burst.
+
+    The sleep happens outside the lock on purpose. Holding it while waiting
+    would make the workers queue up behind each other and turn the pool back
+    into a single stream.
+    """
+
+    __slots__ = ("_interval", "_lock", "_next")
+
+    def __init__(self, interval: float) -> None:
+        self._interval = interval
+        self._lock = threading.Lock()
+        self._next = 0.0
+
+    def wait(self) -> None:
+        if self._interval <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            delay = max(0.0, self._next - now)
+            self._next = max(now, self._next) + self._interval
+        if delay:
+            time.sleep(delay)

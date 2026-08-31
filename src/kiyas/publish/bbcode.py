@@ -12,6 +12,12 @@ after one would go stale the moment another site adopted the same tag.
     A plain ``[img]`` list, for software that has no comparison tag.
 ``markdown``
     For issue trackers and anywhere else that is not a forum.
+``thumbnails``
+    ``[url=page][img]thumb[/img][/url]`` per source, grouped by frame. The one
+    format that does not inline the full picture, which is what makes a post of
+    two dozen 4K screenshots readable rather than a scroll. It needs a host
+    that makes thumbnails and says where they are; the others need only one
+    address per image.
 """
 
 from __future__ import annotations
@@ -20,7 +26,7 @@ from collections.abc import Sequence
 
 from .manifest import Comparison
 
-FORMATS = ("comparison", "img", "markdown")
+FORMATS = ("comparison", "img", "markdown", "thumbnails")
 
 
 class BBCodeError(ValueError):
@@ -85,9 +91,49 @@ def markdown(comparison: Comparison, urls: Sequence[str]) -> str:
     return "\n".join(lines).strip()
 
 
-def render(comparison: Comparison, urls: Sequence[str], fmt: str) -> str:
+def thumbnail_list(comparison: Comparison, urls: Sequence[str], *, pages: Sequence[str]) -> str:
+    """Thumbnails that link to the full picture, grouped by frame.
+
+    Two addresses per image rather than one, which is why this format takes an
+    argument the others do not: the thumbnail goes inside the ``[img]`` tag and
+    the page goes in the link around it. Pairing them in the wrong order gives
+    a post where every thumbnail opens somebody else's frame, and nothing about
+    it looks wrong, so the lengths are checked against each other as well as
+    against the grid.
+    """
+    _check(comparison, urls)
+    if len(pages) != len(urls):
+        raise BBCodeError(
+            f"got {len(pages)} pages for {len(urls)} thumbnails. Pairing them would "
+            f"put the wrong picture behind the wrong thumbnail."
+        )
+    lines: list[str] = []
+    thumbs = _row_major(comparison, urls)
+    links = _row_major(comparison, pages)
+    for row, row_thumbs, row_links in zip(comparison.rows, thumbs, links, strict=True):
+        lines.append(f"[b]{row.label}[/b]")
+        for source, thumb, page in zip(comparison.sources, row_thumbs, row_links, strict=True):
+            lines.append(f"{source.name}: [url={page}][img]{thumb}[/img][/url]")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def render(
+    comparison: Comparison,
+    urls: Sequence[str],
+    fmt: str,
+    *,
+    pages: Sequence[str] | None = None,
+) -> str:
     if fmt not in FORMATS:
         raise BBCodeError(f"unknown format {fmt!r}; expected one of {', '.join(FORMATS)}")
+    if fmt == "thumbnails":
+        if pages is None:
+            raise BBCodeError(
+                "the thumbnails format needs a page for every thumbnail, and this host "
+                "did not give one. Use img, which links the pictures directly."
+            )
+        return thumbnail_list(comparison, urls, pages=pages)
     return {"comparison": comparison_tag, "img": img_list, "markdown": markdown}[fmt](
         comparison, urls
     )

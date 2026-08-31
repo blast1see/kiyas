@@ -56,6 +56,57 @@ MEDIA_FILTER = (
 
 SOURCE_COLUMNS = ("Name", "Trim", "Crop", "Resize", "Tonemap", "File")
 
+#: Where the window can publish, in the order it offers them. The value is the
+#: same string ``--to`` takes, so the two surfaces cannot drift apart.
+PUBLISH_TARGETS = (
+    ("slowpics", "slow.pics"),
+    ("comppics", "comp.pics"),
+    ("pixhost", "pixhost"),
+)
+
+#: Who will be able to see it, per host. The window said "the collection will
+#: be unlisted" whatever the destination, which was true of exactly one of
+#: them -- and the sentence is the only thing between someone and publishing a
+#: comparison more widely than they meant to.
+PUBLISH_VISIBILITY = {
+    "slowpics": (
+        "The collection will be unlisted: anyone with the link can see it, "
+        "but it will not appear on the site."
+    ),
+    "comppics": (
+        "comp.pics has no unlisted mode. The comparison will be listed publicly, "
+        "and will be removed after 7 days."
+    ),
+    "pixhost": (
+        "pixhost has no unlisted mode and no expiry. Anyone with the link can "
+        "see these, and it hosts pictures rather than a comparison viewer."
+    ),
+}
+
+
+def _uploader(target: str):
+    """The upload function for a destination, imported when it is chosen.
+
+    Imported inside the function for the same reason the CLI does it: each
+    backend pulls in requests, and opening the window must not depend on being
+    able to publish from it.
+
+    Spelled out rather than looked up by name so that the import is a literal a
+    packager can see. A computed module name would build fine and then fail in
+    the frozen build, which is where nobody is watching.
+    """
+    if target == "slowpics":
+        from ..publish import slowpics
+
+        return slowpics.upload
+    if target == "comppics":
+        from ..publish import comppics
+
+        return comppics.upload
+    from ..publish import pixhost
+
+    return pixhost.upload
+
 
 class GuiError(ValueError):
     """Raised when what is on screen cannot be turned into a project."""
@@ -329,10 +380,18 @@ class MainWindow(QMainWindow):
         self.open_button.clicked.connect(self.open_output)
         row.addWidget(self.open_button)
 
-        self.publish_button = QPushButton("Publish to slow.pics")
+        self.publish_button = QPushButton("Publish")
         self.publish_button.setEnabled(False)
         self.publish_button.clicked.connect(self.publish)
         row.addWidget(self.publish_button)
+
+        # The destination sits next to the button rather than inside the
+        # confirmation: where a comparison goes decides who can see it, and
+        # that is not something to discover after clicking.
+        self.publish_target_combo = QComboBox()
+        for value, label in PUBLISH_TARGETS:
+            self.publish_target_combo.addItem(label, value)
+        row.addWidget(self.publish_target_combo)
 
         self.link_edit = QLineEdit(readOnly=True)
         self.link_edit.setPlaceholderText("The published link appears here.")
@@ -724,10 +783,14 @@ class MainWindow(QMainWindow):
 
         return work
 
+    @property
+    def publish_target(self) -> str:
+        return self.publish_target_combo.currentData()
+
     def publish(self) -> None:
         if self._runner.busy or self._output_directory is None:
             return
-        from ..publish import load_manifest, slowpics
+        from ..publish import load_manifest
 
         try:
             comparison = load_manifest(self._output_directory)
@@ -735,20 +798,21 @@ class MainWindow(QMainWindow):
             self._complain("There is nothing to publish", str(exc))
             return
 
+        target = self.publish_target
         answer = QMessageBox.question(
             self,
-            "Publish to slow.pics",
+            f"Publish to {dict(PUBLISH_TARGETS)[target]}",
             f"Upload {comparison.total_images} images as “{comparison.title}”?\n\n"
-            f"The collection will be unlisted: anyone with the link can see it, "
-            f"but it will not appear on the site.",
+            f"{PUBLISH_VISIBILITY[target]}",
         )
         if answer is not QMessageBox.StandardButton.Yes:
             return
 
         self._busy(True)
+        upload = _uploader(target)
 
         def work(progress):
-            return slowpics.upload(comparison, progress=progress)
+            return upload(comparison, progress=progress)
 
         self._runner.start(
             work, on_progress=self._note, on_done=self._published, on_failed=self._failed
@@ -776,6 +840,10 @@ class MainWindow(QMainWindow):
 
     def _published(self, result) -> None:
         self._busy(False)
+        # The notes are the only place a host says it did something other than
+        # what was asked, and the window was throwing them away.
+        for note in getattr(result, "notes", ()):
+            self._note(f"note: {note}")
         url = getattr(result, "url", "")
         self.link_edit.setText(url)
         self._note(f"published: {url}")

@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
 authors = [{ name = "blast1see" }]
-keywords = ["vapoursynth", "ffmpeg", "mpv", "slowpics", "comppics", "comparison", "screenshots", "encoding"]
+keywords = ["vapoursynth", "ffmpeg", "mpv", "slowpics", "comppics", "pixhost", "comparison", "screenshots", "encoding"]
 classifiers = [
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
@@ -74,7 +74,11 @@ packages = ["src/kiyas"]
 
 [tool.pytest.ini_options]
 minversion = "8.3"
-addopts = "-ra --strict-markers"
+# `live` is deselected by default. Registering the marker labels those tests;
+# it does not stop them running, so a bare `pytest` uploaded a synthetic
+# comparison to three real hosts. Opting in is `pytest -m live`, which
+# replaces this rather than adding to it.
+addopts = "-ra --strict-markers -m 'not live'"
 testpaths = ["tests"]
 markers = [
     "integration: requires working FFmpeg and FFprobe binaries",

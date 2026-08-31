@@ -16,7 +16,7 @@ from fractions import Fraction
 
 import pytest
 
-from kiyas.publish import bbcode, load_manifest, slowpics
+from kiyas.publish import bbcode, load_manifest, slowpics, transport
 from kiyas.publish.bbcode import BBCodeError
 from kiyas.publish.manifest import Comparison, ComparisonRow, ManifestError
 from kiyas.publish.slowpics import UploadError
@@ -740,8 +740,8 @@ def test_the_upload_timeout_grows_with_the_image():
     "the write operation timed out". Six uploads share one uplink, so each gets
     roughly a sixth of it, and the timeout has to allow for that.
     """
-    small = slowpics._upload_timeout(40_000)
-    big = slowpics._upload_timeout(6_000_000)
+    small = transport.upload_timeout(40_000)
+    big = transport.upload_timeout(6_000_000)
 
     assert big > small
     assert big >= 180, "a 6 MB image needs more than the old 30 seconds"
@@ -750,17 +750,17 @@ def test_the_upload_timeout_grows_with_the_image():
 
 def test_retry_after_header_is_honoured():
     """A number from the server is obeyed exactly; anything else backs off."""
-    assert slowpics._retry_after("7", 0) == 7.0
+    assert transport.retry_after("7", 0) == 7.0
 
     # No usable header falls through to the jittered backoff, so the contract
     # is a range rather than a number.
-    assert 1.0 <= slowpics._retry_after(None, 0) <= 2.0
-    assert 4.0 <= slowpics._retry_after("nonsense", 2) <= 8.0
+    assert 1.0 <= transport.retry_after(None, 0) <= 2.0
+    assert 4.0 <= transport.retry_after("nonsense", 2) <= 8.0
 
 
 def test_retry_after_never_returns_zero():
     """A zero would turn a rate limit into a tight loop against a free service."""
-    assert slowpics._retry_after("0", 0) >= 1.0
+    assert transport.retry_after("0", 0) >= 1.0
 
 
 # --------------------------------------------------------------------------
@@ -777,7 +777,7 @@ def test_pacer_spaces_starts_apart(monkeypatch):
     asked: list[float] = []
     monkeypatch.setattr(slowpics.time, "sleep", lambda seconds: asked.append(seconds))
 
-    pacer = slowpics._Pacer(5.0)
+    pacer = transport.Pacer(5.0)
     for _ in range(4):
         pacer.wait()
 
@@ -802,7 +802,7 @@ def test_pacer_gate_is_global_not_per_thread(monkeypatch):
 
     monkeypatch.setattr(slowpics.time, "sleep", record)
 
-    pacer = slowpics._Pacer(5.0)
+    pacer = transport.Pacer(5.0)
     threads = [threading.Thread(target=pacer.wait) for _ in range(6)]
     for thread in threads:
         thread.start()
@@ -820,7 +820,7 @@ def test_pacer_of_zero_does_not_sleep(monkeypatch):
     slept: list[float] = []
     monkeypatch.setattr(slowpics.time, "sleep", lambda seconds: slept.append(seconds))
 
-    pacer = slowpics._Pacer(0.0)
+    pacer = transport.Pacer(0.0)
     for _ in range(5):
         pacer.wait()
 
@@ -872,17 +872,17 @@ def test_pacing_is_on_by_default():
 def test_backoff_grows_and_stays_bounded():
     """Growing, jittered, and never past the ceiling."""
     for attempt in range(10):
-        wait = slowpics._backoff(attempt)
-        assert 0 < wait <= slowpics.MAX_BACKOFF
+        wait = transport.backoff(attempt)
+        assert 0 < wait <= transport.MAX_BACKOFF
 
-    early = [slowpics._backoff(0) for _ in range(20)]
-    late = [slowpics._backoff(4) for _ in range(20)]
+    early = [transport.backoff(0) for _ in range(20)]
+    late = [transport.backoff(4) for _ in range(20)]
     assert max(early) < min(late), "a later attempt should wait longer"
 
 
 def test_backoff_is_jittered():
     """Identical waits would make six workers retry in lockstep."""
-    assert len({slowpics._backoff(3) for _ in range(20)}) > 1
+    assert len({transport.backoff(3) for _ in range(20)}) > 1
 
 
 # --------------------------------------------------------------------------
@@ -958,9 +958,40 @@ def test_render_rejects_an_unknown_format(tmp_path):
 
 @pytest.mark.parametrize("fmt", bbcode.FORMATS)
 def test_every_declared_format_renders(tmp_path, fmt):
+    """A format in FORMATS that cannot be rendered is a broken --format value."""
+    comparison = _comparison(tmp_path)
+    urls = _urls(comparison)
+    # thumbnails is the one format that needs two addresses per image.
+    extra = {"pages": urls} if fmt == "thumbnails" else {}
+
+    assert bbcode.render(comparison, urls, fmt, **extra)
+
+
+def test_thumbnails_says_so_when_the_host_gave_no_pages(tmp_path):
     comparison = _comparison(tmp_path)
 
-    assert bbcode.render(comparison, _urls(comparison), fmt)
+    with pytest.raises(BBCodeError, match="does not make thumbnails|needs a page"):
+        bbcode.render(comparison, _urls(comparison), "thumbnails")
+
+
+def test_thumbnails_refuses_a_short_page_list(tmp_path):
+    """A missing page would pair a thumbnail with somebody else's frame."""
+    comparison = _comparison(tmp_path)
+    urls = _urls(comparison)
+
+    with pytest.raises(BBCodeError, match="pages for"):
+        bbcode.render(comparison, urls, "thumbnails", pages=urls[:-1])
+
+
+def test_thumbnails_links_each_thumbnail_to_its_own_page(tmp_path):
+    comparison = _comparison(tmp_path)
+    thumbs = [f"https://t1.example/thumb{n}.png" for n in range(comparison.total_images)]
+    pages = [f"https://example/show{n}.png" for n in range(comparison.total_images)]
+
+    markup = bbcode.render(comparison, thumbs, "thumbnails", pages=pages)
+
+    for thumb, page in zip(thumbs, pages, strict=True):
+        assert f"[url={page}][img]{thumb}[/img][/url]" in markup
 
 
 def test_collection_link_names_the_sources(tmp_path):
@@ -1038,3 +1069,22 @@ def test_a_reference_is_told_apart_from_a_title(value, is_reference):
 def test_a_bare_number_is_still_refused_rather_than_searched_for():
     with pytest.raises(ValueError, match="film or a series"):
         slowpics.normalise_tmdb("1275779")
+
+
+def test_the_live_publish_tests_do_not_run_by_accident():
+    """`pytest` with no arguments must not upload anything to anybody.
+
+    Registering the `live` marker labels those tests; it does not stop them
+    running. A bare `pytest -q` -- the command CLAUDE.md gives as "unit tests,
+    no media needed" -- published a synthetic comparison to all three hosts
+    before this was in `addopts`. Opting in is `pytest -m live`, which replaces
+    the expression rather than adding to it.
+    """
+    import tomllib
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    addopts = config["tool"]["pytest"]["ini_options"]["addopts"]
+
+    assert "not live" in addopts

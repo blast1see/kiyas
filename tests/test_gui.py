@@ -752,3 +752,69 @@ def test_every_engine_is_selectable_when_all_are_present(window, monkeypatch):
         )
     finally:
         fresh.close()
+
+
+# --------------------------------------------------------------------------
+# Publishing
+# --------------------------------------------------------------------------
+
+
+def test_the_window_offers_every_destination_the_command_line_does(window):
+    """One list, or the two surfaces drift and the window quietly loses a host."""
+    from kiyas import cli
+    from kiyas.gui.window import PUBLISH_TARGETS
+
+    offered = [
+        window.publish_target_combo.itemData(index)
+        for index in range(window.publish_target_combo.count())
+    ]
+
+    assert offered == [value for value, _label in PUBLISH_TARGETS]
+    for value in offered:
+        # Parses means the command line has it too; argparse refuses the rest.
+        assert cli.build_parser().parse_args(["publish", "out", "--to", value]).to == value
+
+
+def test_the_default_destination_is_the_timid_one(window):
+    assert window.publish_target == "slowpics"
+
+
+def test_every_destination_says_who_will_see_it(window):
+    """The window said "will be unlisted" whatever the host, and that was true
+    of exactly one of the three. Somebody reading it before clicking is the
+    only thing between them and publishing more widely than they meant to.
+    """
+    from kiyas.gui.window import PUBLISH_TARGETS, PUBLISH_VISIBILITY
+
+    sentences = [PUBLISH_VISIBILITY[value] for value, _label in PUBLISH_TARGETS]
+
+    assert all(sentences)
+    assert len(set(sentences)) == len(sentences)
+    assert "unlisted" in PUBLISH_VISIBILITY["slowpics"]
+    assert "no unlisted mode" in PUBLISH_VISIBILITY["comppics"]
+    assert "no unlisted mode" in PUBLISH_VISIBILITY["pixhost"]
+
+
+def test_each_destination_resolves_to_its_own_uploader():
+    from kiyas.gui.window import PUBLISH_TARGETS, _uploader
+    from kiyas.publish import comppics, pixhost, slowpics
+
+    assert _uploader("slowpics") is slowpics.upload
+    assert _uploader("comppics") is comppics.upload
+    assert _uploader("pixhost") is pixhost.upload
+    assert len({_uploader(value) for value, _label in PUBLISH_TARGETS}) == 3
+
+
+def test_the_window_reports_what_the_host_did_differently(window):
+    """The notes were being dropped, and they are the only place a host says
+    it stored something other than what was asked for.
+    """
+    from kiyas.publish.result import UploadResult
+
+    window._published(
+        UploadResult(
+            key="k", url="https://example/c/k", uploaded=4, skipped=0, notes=("kept 7 days",)
+        )
+    )
+
+    assert "kept 7 days" in window.log.toPlainText()

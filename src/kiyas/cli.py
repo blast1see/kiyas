@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--publish", action="store_true", help="Publish when the run finishes.")
     run_cmd.add_argument(
         "--publish-to",
-        choices=("slowpics", "comppics"),
+        choices=("slowpics", "comppics", "pixhost"),
         default="slowpics",
         help="Where --publish sends the comparison. Default: slowpics.",
     )
@@ -116,7 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     audio.add_argument("--publish", action="store_true", help="Publish when the analysis finishes.")
     audio.add_argument(
         "--publish-to",
-        choices=("slowpics", "comppics"),
+        choices=("slowpics", "comppics", "pixhost"),
         default="slowpics",
         help="Where --publish sends the comparison. Default: slowpics.",
     )
@@ -132,7 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     publish.add_argument(
         "--to",
-        choices=("slowpics", "comppics"),
+        choices=("slowpics", "comppics", "pixhost"),
         default="slowpics",
         help="Which host to publish to. Default: slowpics.",
     )
@@ -163,7 +163,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="List the comparison publicly. Unlisted by default. slowpics only.",
     )
     publish.add_argument(
-        "--nsfw", action="store_true", help="Flag the collection as adult. slowpics only."
+        "--nsfw",
+        action="store_true",
+        help="Flag the images as adult. slowpics and pixhost.",
     )
     publish.add_argument(
         "--no-optimize",
@@ -189,11 +191,18 @@ def build_parser() -> argparse.ArgumentParser:
         "slowpics only.",
     )
     publish.add_argument(
+        "--thumb-size",
+        type=int,
+        metavar="PX",
+        help="Width of the thumbnails the host makes, 150-500. pixhost only.",
+    )
+    publish.add_argument(
         "--format",
         dest="formats",
         action="append",
-        choices=("comparison", "img", "markdown"),
-        help="Also write forum markup. Repeatable.",
+        choices=("comparison", "img", "markdown", "thumbnails"),
+        help="Also write forum markup. Repeatable. thumbnails needs a host that "
+        "makes them, which of the three is pixhost.",
     )
 
     return parser
@@ -339,23 +348,49 @@ def _publish_defaults(target: str = "slowpics"):
         remove_after=0,
         tmdb=None,
         formats=None,
+        thumb_size=None,
     )
 
 
-#: Options only slow.pics understands, paired with the flag that sets them.
-#: Naming them lets the comppics path say which ones it dropped rather than
+#: Per host, the options it has no equivalent for, paired with the flag that
+#: sets them. Naming them lets a sender say which ones it dropped rather than
 #: dropping them quietly -- somebody who typed `--public` has a belief about
-#: what is about to happen, and it is wrong on that host in both directions.
-_SLOWPICS_ONLY = (
-    ("--public", "public"),
-    ("--nsfw", "nsfw"),
-    ("--no-optimize", "no_optimize"),
-    ("--tmdb", "tmdb"),
-)
+#: what is about to happen, and it is wrong on a host that has no such setting.
+#:
+#: A third destination is what turned this from one tuple named after the host
+#: that owns the flags into a table keyed by the host that does not.
+_NO_EQUIVALENT = {
+    "slowpics": (("--thumb-size", "thumb_size"),),
+    "comppics": (
+        ("--public", "public"),
+        ("--nsfw", "nsfw"),
+        ("--no-optimize", "no_optimize"),
+        ("--tmdb", "tmdb"),
+        ("--thumb-size", "thumb_size"),
+    ),
+    "pixhost": (
+        ("--public", "public"),
+        ("--no-optimize", "no_optimize"),
+        ("--tmdb", "tmdb"),
+        ("--remove-after", "remove_after"),
+    ),
+}
+
+
+def _report_dropped(args, host: str, console) -> None:
+    from rich.markup import escape
+
+    dropped = [flag for flag, attr in _NO_EQUIVALENT[host] if attr and getattr(args, attr, None)]
+    if dropped:
+        console.print(
+            f"[yellow]ignored:[/yellow] {escape(', '.join(dropped))} — {host} has no equivalent."
+        )
 
 
 def _slowpics_sender(args, comparison, console):
     from .publish import slowpics
+
+    _report_dropped(args, "slowpics", console)
 
     if getattr(args, "host_url", None):
         raise ValueError("--host-url only applies to --to comppics; slow.pics is one site.")
@@ -395,15 +430,10 @@ def _slowpics_sender(args, comparison, console):
 
 
 def _comppics_sender(args, comparison, console):
-    from rich.markup import escape
 
     from .publish import comppics
 
-    dropped = [flag for flag, attr in _SLOWPICS_ONLY if getattr(args, attr, None)]
-    if dropped:
-        console.print(
-            f"[yellow]ignored:[/yellow] {escape(', '.join(dropped))} — comppics has no equivalent."
-        )
+    _report_dropped(args, "comppics", console)
 
     # Said before anything is sent rather than after. This host has no unlisted
     # mode at all: its own API hands the whole catalogue to anyone who asks, so
@@ -452,7 +482,42 @@ def _comppics_sender(args, comparison, console):
     return send
 
 
-_SENDERS = {"slowpics": _slowpics_sender, "comppics": _comppics_sender}
+def _pixhost_sender(args, comparison, console):
+    from .publish import pixhost
+
+    if getattr(args, "host_url", None):
+        raise ValueError("--host-url only applies to --to comppics; pixhost is one site.")
+    if getattr(args, "tags", None):
+        raise ValueError("--tag only applies to --to comppics; pixhost has no tags.")
+
+    size = getattr(args, "thumb_size", None)
+    if size is None:
+        size = pixhost.THUMB_SIZE
+    low, high = pixhost.THUMB_RANGE
+    if not low <= size <= high:
+        raise ValueError(f"--thumb-size takes a width between {low} and {high} pixels.")
+
+    _report_dropped(args, "pixhost", console)
+
+    # Said before anything is sent rather than after. This host has no unlisted
+    # mode and no expiry: the API offers neither, so the timid defaults the
+    # other two honour do not exist here and cannot be faked.
+    console.print(
+        "[yellow]note:[/yellow] pixhost has no unlisted mode and no expiry; anyone "
+        "with the link can see these."
+    )
+
+    def send(progress):
+        return pixhost.upload(comparison, nsfw=args.nsfw, thumb_size=size, progress=progress)
+
+    return send
+
+
+_SENDERS = {
+    "slowpics": _slowpics_sender,
+    "comppics": _comppics_sender,
+    "pixhost": _pixhost_sender,
+}
 
 
 def _cmd_publish(args, *, directory: Path | None = None) -> int:
@@ -528,8 +593,20 @@ def _markup(comparison, result, fmt: str) -> str:
     """
     from .publish import bbcode
 
+    if fmt == "thumbnails":
+        if not (result.thumbnail_urls and result.page_urls):
+            raise bbcode.BBCodeError(
+                "this host does not make thumbnails, so there is nothing to link. Use --format img."
+            )
+        return bbcode.render(comparison, result.thumbnail_urls, fmt, pages=result.page_urls)
     if result.image_urls:
         return bbcode.render(comparison, result.image_urls, fmt)
+    if result.page_urls:
+        # A host that gives a page per image but no direct picture. The page is
+        # a link, never an [img] source, so only the formats that link work.
+        if fmt == "markdown":
+            return bbcode.markdown(comparison, result.page_urls)
+        return bbcode.collection_link(comparison, result.url)
     if fmt == "markdown":
         return f"[{comparison.title}]({result.url})"
     return bbcode.collection_link(comparison, result.url)
@@ -621,7 +698,16 @@ def _cmd_align(args) -> int:
         [source.trim for source in project.sources],
     )
     if any(trim != source.trim for source, trim in zip(project.sources, trims)):
-        console.print("\nPaste this into the project file:\n")
+        # A block headed "paste this" is read as an instruction, and the caveat
+        # a few lines above it is not. If nothing here is confident, the head
+        # of the block has to carry that or the numbers get pasted anyway.
+        if all(result.is_weak for result in results):
+            console.print(
+                "\n[yellow]Nothing here is a confident measurement. Check the numbers "
+                "against the film before pasting them:[/yellow]\n"
+            )
+        else:
+            console.print("\nPaste this into the project file:\n")
         for source, trim in zip(project.sources, trims):
             console.print(escape(f"[[source]]  # {source.name}"))
             console.print(escape(f"trim = {trim}"))

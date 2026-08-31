@@ -32,7 +32,6 @@ what ``UploadResult.image_urls`` is for.
 from __future__ import annotations
 
 import os
-import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -91,21 +90,12 @@ MAX_ATTEMPTS = 5
 #: Set to zero to disable, which is what the tests do.
 MIN_UPLOAD_INTERVAL = 0.4
 
-#: Ceiling for the retry backoff. Without one, exponential growth puts the last
-#: attempt minutes away and the run looks hung.
-MAX_BACKOFF = 30.0
-
 #: Seconds for the small JSON calls. The image bodies get their own, sized to
 #: the image, for the reasons set out in the slow.pics module.
 _TIMEOUT = 30.0
 
 #: Header carrying the token that authorises writes to an ownerless comparison.
 EDIT_TOKEN_HEADER = "X-Edit-Token"
-
-
-def _upload_timeout(size_bytes: int) -> float:
-    """Seconds to allow for one image, sized to the image."""
-    return max(90.0, 30.0 * size_bytes / 1_000_000)
 
 
 def _count(number: int, noun: str) -> str:
@@ -214,56 +204,6 @@ def build_cells(comparison: Comparison) -> list[_Cell]:
         for source_index, source in enumerate(comparison.sources)
         for row_index, path in enumerate(source.images)
     ]
-
-
-class _Pacer:
-    """Keeps request starts a minimum interval apart, across every worker.
-
-    The thread pool limits how many uploads run at once; this limits how fast
-    they are allowed to *begin*. Those are different things, and only the
-    second one is visible to the server as a burst.
-
-    The sleep happens outside the lock on purpose. Holding it while waiting
-    would make the workers queue up behind each other and turn the pool back
-    into a single stream.
-    """
-
-    __slots__ = ("_interval", "_lock", "_next")
-
-    def __init__(self, interval: float) -> None:
-        self._interval = interval
-        self._lock = threading.Lock()
-        self._next = 0.0
-
-    def wait(self) -> None:
-        if self._interval <= 0:
-            return
-        with self._lock:
-            now = time.monotonic()
-            delay = max(0.0, self._next - now)
-            self._next = max(now, self._next) + self._interval
-        if delay:
-            time.sleep(delay)
-
-
-def _backoff(attempt: int) -> float:
-    """Seconds to wait before retry ``attempt``, growing and jittered.
-
-    Jitter matters more than the growth. Workers that hit the same rate limit
-    at the same moment will, with a fixed delay, wake up together and reproduce
-    the burst that caused it. The random half spreads them out.
-    """
-    ceiling = min(MAX_BACKOFF, 2.0 * 2**attempt)
-    return ceiling * (0.5 + random.random() / 2)
-
-
-def _retry_after(header: str | None, attempt: int) -> float:
-    if header:
-        try:
-            return max(1.0, float(header))
-        except ValueError:
-            pass
-    return _backoff(attempt)
 
 
 def upload(
@@ -379,7 +319,7 @@ def _send_images(client, api, comparison_id, edit_token, cells, host, progress) 
     done = 0
     total = len(cells)
 
-    pacer = _Pacer(MIN_UPLOAD_INTERVAL)
+    pacer = transport.Pacer(MIN_UPLOAD_INTERVAL)
     # Set by the first worker to be refused outright, so one refusal costs one
     # request rather than one per remaining image.
     blocked = threading.Event()
@@ -411,7 +351,7 @@ def _send_images(client, api, comparison_id, edit_token, cells, host, progress) 
 
 def _send_one(client, api, comparison_id, edit_token, cell, pacer, blocked, host) -> str:
     body = cell.path.read_bytes()
-    timeout = _upload_timeout(len(body))
+    timeout = transport.upload_timeout(len(body))
 
     fields = {
         "row": str(cell.row),
@@ -437,11 +377,11 @@ def _send_one(client, api, comparison_id, edit_token, cell, pacer, blocked, host
         except Exception as exc:  # noqa: BLE001 - retry transport failures
             if attempt == MAX_ATTEMPTS - 1:
                 raise UploadError(str(exc)) from exc
-            time.sleep(_backoff(attempt))
+            time.sleep(transport.backoff(attempt))
             continue
 
         if response.status_code == 429:
-            time.sleep(_retry_after(response.headers.get("Retry-After"), attempt))
+            time.sleep(transport.retry_after(response.headers.get("Retry-After"), attempt))
             continue
 
         if response.status_code == 403:
@@ -455,7 +395,7 @@ def _send_one(client, api, comparison_id, edit_token, cell, pacer, blocked, host
         if response.status_code >= 500:
             if attempt == MAX_ATTEMPTS - 1:
                 raise UploadError(f"HTTP {response.status_code}")
-            time.sleep(_backoff(attempt))
+            time.sleep(transport.backoff(attempt))
             continue
 
         if response.status_code >= 400:
