@@ -214,6 +214,7 @@ class FrameEngine(Protocol):
         progress: Callable[[str], None] | None = None,
         index_dir: Path | None = None,
         render: RenderSettings | None = None,
+        for_measurement: bool = False,
     ) -> PreparedSource:
         """Open ``source`` and apply its transformations in the fixed order.
 
@@ -229,5 +230,13 @@ class FrameEngine(Protocol):
         ``render`` is set only for a settings comparison. An engine that cannot
         vary its rendering must raise :class:`EngineError` rather than ignore
         it.
+
+        ``for_measurement`` says this source is being opened to read numbers
+        off -- frame counts, picture types, brightness -- and not to produce
+        pictures anybody will look at. `align` does that, and so does the mpv
+        engine, which borrows an ffmpeg source for the numbers and draws the
+        frames itself. An engine may skip a refusal that is only about how a
+        frame would *look*; it must not skip one about whether the numbers can
+        be read at all.
         """
         ...

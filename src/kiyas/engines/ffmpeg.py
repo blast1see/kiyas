@@ -617,8 +617,13 @@ class FfmpegEngine:
         progress: Callable[[str], None] | None = None,
         index_dir: Path | None = None,
         render: RenderSettings | None = None,
+        for_measurement: bool = False,
     ) -> FfmpegSource:
         # index_dir is ignored: this engine seeks per frame and builds no index.
+        #
+        # `for_measurement` is set by the mpv engine, which borrows this source
+        # for frame counts, picture types and brightness and draws the pictures
+        # itself. Refusals about how a frame would *look* do not apply to it.
         tools = tools or {}
         if render is not None:
             raise EngineError(
@@ -664,6 +669,17 @@ class FfmpegEngine:
                 f"Use the VapourSynth engine, or set tonemap = 'hdr10'. Neither "
                 f"engine applies HDR10+ per-scene metadata; both tone map the "
                 f"HDR10 base statically."
+            )
+        if mode is Tonemap.HDR10 and info.dovi_profile == 5 and not for_measurement:
+            # Profile 5's base layer is IPT-PQ-C2, not BT.2020 PQ. The chain
+            # below reads the wrong colours out of it and produces the
+            # green/purple cast `media/probe.py` describes -- and the frame
+            # comes out labelled "tonemapped hdr10", so the picture claims to
+            # be right. Profile 8 is fine: it has a real HDR10 base layer.
+            raise EngineError(
+                f"{source.name}: Dolby Vision profile 5 has no HDR10 base layer to tone "
+                f"map -- doing it anyway gives the green and purple cast. Use the "
+                f"VapourSynth engine, which reads the Dolby Vision metadata itself."
             )
         if mode is Tonemap.HDR10:
             filters.append(_TONEMAP_CHAIN)

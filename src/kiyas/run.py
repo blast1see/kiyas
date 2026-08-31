@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from fractions import Fraction
@@ -26,7 +27,7 @@ from .engines.base import DARK_LUMA_THRESHOLD, EngineError, RenderSettings
 from .frames import align, selector
 from .media import rpu
 from .media.binaries import BinaryNotFound
-from .media.probe import ProbeError, probe
+from .media.probe import ProbeError, VideoInfo, probe
 
 MANIFEST_NAME = "kiyas-manifest.json"
 
@@ -41,19 +42,74 @@ _RESERVED = {
 }  # fmt: skip
 
 
+#: Longest directory name kiyas will produce. Well under every filesystem's
+#: own limit, because the full path it sits in is the user's, not ours.
+MAX_DIRECTORY_NAME = 100
+
+
 def safe_directory_name(name: str) -> str:
     """A directory name that survives every filesystem kiyas runs on.
 
     Source names are free text -- "Lionsgate GBR/USA" and "REMUX (DV: FEL)" are
     both realistic -- and both contain characters Windows rejects. The original
     name is kept in the manifest; only the folder is sanitised.
+
+    A pure function of one name: it cannot see the other columns, so it cannot
+    promise uniqueness. That is `unique_directory_names`' job.
     """
-    cleaned = _ILLEGAL.sub("_", name).strip().rstrip(".")
+    cleaned = _ILLEGAL.sub("_", name).strip()
+    # Truncate before the last strip, not after: cutting at 100 characters can
+    # land on a space or a dot, and Windows drops both from a directory name --
+    # which would put back exactly what the strip above just removed.
+    cleaned = cleaned[:MAX_DIRECTORY_NAME].strip().rstrip(".")
     if not cleaned:
         cleaned = "source"
     if cleaned.upper() in _RESERVED or cleaned.split(".")[0].upper() in _RESERVED:
         cleaned = f"_{cleaned}"
-    return cleaned[:100]
+    return cleaned[:MAX_DIRECTORY_NAME]
+
+
+def unique_directory_names(names: Sequence[str]) -> list[str]:
+    """One directory per column, even when two names sanitise to the same thing.
+
+    Config rejects duplicate source *names*, but not names that only collide
+    once sanitised. Four realistic ways two distinct columns land in one
+    directory, all of them measured:
+
+        "Lionsgate GBR/USA" / "Lionsgate GBR_USA"   an illegal character
+        "Remux." / "Remux"                          a trailing dot
+        "REMUX" / "remux"                           case, on any Windows disk
+        "...Atmos-GROUPONE" / "...Atmos-GROUPTWO"   truncation at 100
+
+    The last one is the one that bites: scene names routinely pass 100
+    characters and differ only in the group tag at the very *end*.
+
+    Sharing a directory is silent and what it produces looks plausible. The
+    second column's ``NNNNNN.png`` overwrite the first's, the manifest points
+    both columns at the same files, and what gets published is a comparison of
+    a release against itself -- the same shape of failure as uploading the grid
+    transposed, and just as invisible.
+
+    Only the collision pays for it: the first column keeps the name it asked
+    for, and later ones take a ``-2``, ``-3`` suffix that is trimmed back into
+    the length limit rather than pushed past it.
+    """
+    taken: set[str] = set()
+    chosen: list[str] = []
+    for name in names:
+        base = safe_directory_name(name)
+        candidate = base
+        attempt = 2
+        # Case-folded, because two names that differ only in case are two
+        # directories on Linux and one on Windows, and the comparison must not
+        # depend on which disk it was produced on.
+        while candidate.casefold() in taken:
+            tag = f"-{attempt}"
+            candidate = f"{base[: MAX_DIRECTORY_NAME - len(tag)].rstrip('. ')}{tag}"
+            attempt += 1
+        taken.add(candidate.casefold())
+        chosen.append(candidate)
+    return chosen
 
 
 @dataclass(slots=True)
@@ -84,6 +140,24 @@ class RunResult:
 
 class RunError(RuntimeError):
     """Raised when a comparison cannot be produced."""
+
+
+def _probe_or_fail(source: Source, project: Project) -> VideoInfo:
+    """Probe a source, turning "ffprobe could not read this" into a RunError.
+
+    This module's contract is that it raises RunError, and every caller is
+    written to it -- the CLI, the GUI, and `align`. ProbeError is a sibling of
+    RunError rather than a subclass, so before this a file ffprobe could not
+    open came out of `kiyas run` as a traceback, which reads as a crash in
+    kiyas rather than a fact about the file.
+
+    The source's name goes in front because the message underneath is about
+    ffprobe, not about which of five columns it was looking at.
+    """
+    try:
+        return probe(source.path, ffprobe=project.tools.get("ffprobe"))
+    except ProbeError as exc:
+        raise RunError(f"{source.name}: {exc}") from exc
 
 
 def choose_engine(project: Project) -> str:
@@ -359,7 +433,7 @@ def align_project(
         )
 
     engine = engines.get_engine(choose_engine(project))
-    reference = probe(project.sources[0].path, ffprobe=project.tools.get("ffprobe"))
+    reference = _probe_or_fail(project.sources[0], project)
 
     prepared = []
     try:
@@ -375,9 +449,15 @@ def align_project(
                         tools=project.tools,
                         progress=progress,
                         index_dir=project.index_dir,
+                        # Alignment reads brightness and nothing else. A
+                        # refusal about how a frame would look -- the Dolby
+                        # Vision profile 5 one -- is not about this, and
+                        # applying it here would refuse to measure a file the
+                        # measurement handles perfectly well.
+                        for_measurement=True,
                     )
                 )
-            except EngineError as exc:
+            except (EngineError, ProbeError) as exc:
                 raise RunError(str(exc)) from exc
 
         if progress:
@@ -445,7 +525,7 @@ def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:
     # Every clip is normalised to the first source's frame rate. Without this a
     # 25fps PAL transfer and a 23.976 NTSC one disagree about what frame 10000
     # means, and the comparison silently drifts apart.
-    reference = probe(project.sources[0].path, ffprobe=project.tools.get("ffprobe"))
+    reference = _probe_or_fail(project.sources[0], project)
     target_fps: Fraction | None = reference.fps
 
     prepared = []
@@ -465,7 +545,7 @@ def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:
                         render=render,
                     )
                 )
-            except EngineError as exc:
+            except (EngineError, ProbeError) as exc:
                 raise RunError(str(exc)) from exc
 
         labelled = {p.has_overlay for p in prepared}
@@ -571,8 +651,11 @@ def run(project: Project, *, overlay: bool = True, progress=None) -> RunResult:
         # `plan`, not project.sources: a settings comparison has one file and
         # several columns, so zipping against the sources would produce exactly
         # one column and quietly drop the rest.
-        for item, (source, render) in zip(prepared, plan, strict=True):
-            directory = project.output / safe_directory_name(item.name)
+        # Decided over the whole set, not per column: two names that sanitise
+        # to one directory would have the second capture overwrite the first.
+        directories = unique_directory_names([item.name for item in prepared])
+        for item, (source, render), folder in zip(prepared, plan, directories, strict=True):
+            directory = project.output / folder
             if progress:
                 progress(f"capturing {len(frames)} frames from {item.name}")
             try:

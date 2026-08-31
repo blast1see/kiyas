@@ -11,6 +11,8 @@ import pytest
 from kiyas import config, engines, run
 from kiyas.config import Engine, Project
 from kiyas.media import binaries, rpu
+from kiyas.media.binaries import BinaryNotFound
+from kiyas.media.probe import ProbeError
 from kiyas.run import RunError, safe_directory_name
 
 # --------------------------------------------------------------------------
@@ -55,14 +57,55 @@ def test_very_long_names_are_truncated():
     assert len(safe_directory_name("x" * 500)) <= 100
 
 
-def test_distinct_names_can_collide_after_sanitising():
-    """Documented limitation rather than a silent one.
+def test_sanitising_alone_cannot_keep_two_names_apart():
+    """`safe_directory_name` is a pure function of one name, and stays that way.
 
-    'A/B' and 'A_B' both become 'A_B'. Config rejects duplicate source names,
-    but not names that only collide once sanitised, so the second capture
-    would overwrite the first. Worth knowing before it happens in the field.
+    'A/B' and 'A_B' both become 'A_B'. That is not a bug in the sanitiser --
+    it cannot see the other columns. Uniqueness is only decidable once the
+    whole set is known, which is what `unique_directory_names` is for.
     """
     assert safe_directory_name("A/B") == safe_directory_name("A_B")
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        # An illegal character and its replacement.
+        ["Lionsgate GBR/USA", "Lionsgate GBR_USA"],
+        # A trailing dot, which Windows drops from a directory name anyway.
+        ["Remux.", "Remux"],
+        # Case alone. Two names config is happy to accept, one directory on
+        # every Windows filesystem.
+        ["REMUX", "remux"],
+        # Truncation. Scene names routinely pass 100 characters and differ
+        # only in the group tag at the very end -- this is the one that bites.
+        [
+            "X" * 60 + ".2160p.UHD.BluRay.REMUX.DV.HDR.HEVC.TrueHD.7.1.Atmos-GROUPONE",
+            "X" * 60 + ".2160p.UHD.BluRay.REMUX.DV.HDR.HEVC.TrueHD.7.1.Atmos-GROUPTWO",
+        ],
+    ],
+)
+def test_names_that_sanitise_alike_still_get_their_own_directory(names):
+    """Sharing a directory is silent, and what it produces looks plausible.
+
+    The second column's ``NNNNNN.png`` overwrite the first's, the manifest
+    points both columns at the same files, and what gets published is a
+    comparison of a release against itself. Nothing errors.
+    """
+    directories = run.unique_directory_names(names)
+
+    assert len({name.casefold() for name in directories}) == len(names)
+
+
+def test_disambiguated_directories_still_fit_the_length_limit():
+    long = ["X" * 100, "X" * 99 + "Y"]
+
+    assert all(len(name) <= 100 for name in run.unique_directory_names(long))
+
+
+def test_the_first_column_keeps_the_name_it_asked_for():
+    """Only the collision pays for the collision."""
+    assert run.unique_directory_names(["A/B", "A_B"])[0] == "A_B"
 
 
 # --------------------------------------------------------------------------
@@ -98,6 +141,68 @@ def test_explicit_unavailable_engine_is_refused(tmp_path, monkeypatch):
 
     with pytest.raises(RunError, match="not available here"):
         run.choose_engine(project)
+
+
+def test_a_configured_binary_that_is_not_there_is_named(tmp_path):
+    """A typo in [tools] must not read as "that engine is not installed".
+
+    `find_binary` raises for a configured path that does not exist, but
+    `available_engines` wrapped every engine in a bare `except Exception`, so
+    the typo turned into "no frame engine is available. Run 'kiyas doctor'" --
+    and doctor, which resolves from PATH, then reports ffmpeg as ok. The user
+    is sent looking for a problem that is not there.
+    """
+    project = _project(tmp_path, tools={"ffmpeg": str(tmp_path / "nope" / "ffmpeg.exe")})
+
+    with pytest.raises(BinaryNotFound, match="does not exist"):
+        run.choose_engine(project)
+
+
+def test_a_configured_binary_given_as_a_relative_path_is_named(tmp_path):
+    project = _project(tmp_path, tools={"ffmpeg": "ffmpeg.exe"})
+
+    with pytest.raises(BinaryNotFound, match="relative path"):
+        run.choose_engine(project)
+
+
+# --------------------------------------------------------------------------
+# Errors that reach the user
+# --------------------------------------------------------------------------
+
+
+def _explode(*args, **kwargs):
+    raise ProbeError("moov atom not found")
+
+
+def test_a_source_ffprobe_cannot_read_is_an_answer_not_a_traceback(tmp_path, monkeypatch):
+    """`run` promises RunError, and every caller is written to that promise.
+
+    `_cmd_run`, `_cmd_align` and the GUI all catch RunError only. ProbeError is
+    a sibling of RunError, not a subclass, so a file ffprobe cannot open came
+    out of `kiyas run` as a Python traceback -- which reads as a crash in kiyas
+    rather than a fact about the file.
+    """
+    for source in (tmp_path / "a.mkv", tmp_path / "b.mkv"):
+        source.write_bytes(b"not a video")
+    project = _project(tmp_path)
+    project.sources[0].path = tmp_path / "a.mkv"
+    project.sources[1].path = tmp_path / "b.mkv"
+    monkeypatch.setattr(run, "probe", _explode)
+
+    with pytest.raises(RunError, match="moov atom not found"):
+        run.run(project)
+
+
+def test_align_reports_an_unreadable_source_the_same_way(tmp_path, monkeypatch):
+    for source in (tmp_path / "a.mkv", tmp_path / "b.mkv"):
+        source.write_bytes(b"not a video")
+    project = _project(tmp_path)
+    project.sources[0].path = tmp_path / "a.mkv"
+    project.sources[1].path = tmp_path / "b.mkv"
+    monkeypatch.setattr(run, "probe", _explode)
+
+    with pytest.raises(RunError, match="moov atom not found"):
+        run.align_project(project)
 
 
 def test_no_engine_at_all_points_at_doctor(tmp_path, monkeypatch):

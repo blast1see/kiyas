@@ -651,6 +651,9 @@ class VapourSynthEngine:
         progress: Callable[[str], None] | None = None,
         index_dir: Path | None = None,
         render: RenderSettings | None = None,
+        # Accepted and ignored: this engine has no refusal that is only about
+        # how a frame would look, so opening one to measure is the same work.
+        for_measurement: bool = False,
     ) -> VapourSynthSource:
         import vapoursynth as vs
 

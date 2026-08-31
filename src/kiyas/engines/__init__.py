@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from ..media.binaries import BinaryNotFound
 from .base import EngineError, FrameEngine, PreparedSource, RenderSettings
 
 __all__ = [
@@ -59,6 +60,13 @@ def available_engines(tools: Mapping[str, str] | None = None) -> list[str]:
         try:
             if get_engine(name).available(tools):
                 usable.append(name)
+        except BinaryNotFound:
+            # A path the user wrote in [tools] that is relative or is not
+            # there. That is a fact about the config, not about the engine, and
+            # swallowing it turned one mistyped character into "no frame engine
+            # is available. Run 'kiyas doctor'" -- while doctor, which resolves
+            # from PATH, went on reporting the same tool as ok.
+            raise
         except Exception:  # noqa: BLE001 - an unusable engine is not an error
             continue
     return usable

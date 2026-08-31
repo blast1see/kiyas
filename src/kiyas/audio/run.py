@@ -16,7 +16,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..run import MANIFEST_NAME, safe_directory_name
+from ..run import MANIFEST_NAME, unique_directory_names
 from . import table, visuals
 from .analysis import AnalysisError, AudioAnalysis, analyse
 from .probe import AudioTrack, mediainfo_extras, probe_track
@@ -120,12 +120,16 @@ def run(
 
     output.mkdir(parents=True, exist_ok=True)
     results: list[TrackResult] = []
-    for track, name in zip(tracks, names, strict=True):
+    # `_unique_names` keeps the column *labels* apart; this keeps the
+    # directories apart, which is not the same question -- "Mix/DE" and
+    # "Mix_DE" are two labels and, sanitised, one folder.
+    directories = unique_directory_names(names)
+    for track, name, folder in zip(tracks, names, directories, strict=True):
         if progress:
             progress(f"analysing {name}")
         analysis = analyse(track, ffmpeg=tools.get("ffmpeg"), progress=progress)
 
-        directory = output / safe_directory_name(name)
+        directory = output / folder
         directory.mkdir(parents=True, exist_ok=True)
         files: list[Path] = []
         for label, filename in ANALYSES:

@@ -208,6 +208,9 @@ class MpvEngine:
         progress: Callable[[str], None] | None = None,
         index_dir: Path | None = None,
         render: RenderSettings | None = None,
+        # Accepted and ignored: this engine has no refusal that is only about
+        # how a frame would look, so opening one to measure is the same work.
+        for_measurement: bool = False,
     ) -> MpvSource:
         # index_dir is ignored: mpv seeks, it does not build an index.
         tools = tools or {}
@@ -241,7 +244,12 @@ class MpvEngine:
             progress(f"measuring {display_name}")
 
         measure = FfmpegEngine().prepare(
-            source, target_fps=target_fps, overlay=False, tools=tools, progress=None
+            source,
+            target_fps=target_fps,
+            overlay=False,
+            tools=tools,
+            progress=None,
+            for_measurement=True,
         )
         return MpvSource(
             source,

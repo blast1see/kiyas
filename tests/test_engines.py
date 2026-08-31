@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from kiyas import engines
+from kiyas import config, engines
 from kiyas.config import Source, Tonemap
 from kiyas.engines import EngineError
 from kiyas.engines import ffmpeg as ffmpeg_engine_module
@@ -114,6 +114,109 @@ def test_explicit_tonemap_overrides_detection():
 def test_ffmpeg_maps_dolby_vision_down_to_hdr10():
     """The ffmpeg engine has no DoVi support, so auto must not select it."""
     assert FfmpegEngine()._tonemap_mode(_source(), _info(dovi_profile=8)) is Tonemap.HDR10
+
+
+def _prepared_against(tmp_path, monkeypatch, info, **kwargs):
+    """Drive `FfmpegEngine.prepare` past the file check with a chosen probe result."""
+    path = tmp_path / "x.mkv"
+    path.write_bytes(bytes(8))
+    monkeypatch.setattr("kiyas.engines.ffmpeg.probe", lambda *a, **k: info)
+    return FfmpegEngine().prepare(_source(path=path, name="UHD"), **kwargs)
+
+
+def test_ffmpeg_refuses_dolby_vision_profile_5(tmp_path, monkeypatch):
+    """Profile 5 has no HDR10 layer to tone map, and the result is not subtle.
+
+    `probe.py` already says why: "a DoVi profile 5 file carries no usable HDR10
+    layer at all -- tonemapping it as HDR10 produces the green/purple cast that
+    makes those screenshots useless." The base layer is IPT-PQ-C2, not BT.2020
+    PQ, so the chain reads the wrong colours out of it.
+
+    What made this worth an error rather than a warning is the label: the frame
+    came out with "tonemapped hdr10" burnt into it, so the picture claimed to
+    be right. Profile 8 keeps working -- it has a real HDR10 base.
+    """
+    with pytest.raises(EngineError, match="profile 5"):
+        _prepared_against(tmp_path, monkeypatch, _info(dovi_profile=5))
+
+
+def test_ffmpeg_still_takes_dolby_vision_profile_8(tmp_path, monkeypatch):
+    prepared = _prepared_against(tmp_path, monkeypatch, _info(dovi_profile=8))
+
+    assert prepared is not None
+
+
+def test_the_measurement_pass_is_not_refused_profile_5(tmp_path, monkeypatch):
+    """mpv renders profile 5 correctly itself; it only borrows the numbers.
+
+    `MpvEngine.prepare` builds an ffmpeg source to read frame counts, picture
+    types and brightness from. Refusing that would take away a file mpv can
+    actually handle.
+    """
+    prepared = _prepared_against(tmp_path, monkeypatch, _info(dovi_profile=5), for_measurement=True)
+
+    assert prepared is not None
+
+
+def test_align_asks_for_a_measurement_pass(tmp_path, monkeypatch):
+    """Alignment reads brightness and never draws a picture.
+
+    The profile 5 refusal is about how a frame would look. Applying it to the
+    measurement would refuse to align a file the measurement handles perfectly
+    well, which is a worse answer than the one it is protecting against.
+    """
+    from kiyas import run as run_module
+
+    seen = {}
+
+    class _Recording:
+        def prepare(self, source, **kwargs):
+            seen.update(kwargs)
+            raise EngineError("stop here")
+
+    project = config.parse(
+        {
+            "title": "T",
+            "source": [
+                {"path": str(tmp_path / "a.mkv"), "name": "A"},
+                {"path": str(tmp_path / "b.mkv"), "name": "B"},
+            ],
+        }
+    )
+    for source in project.sources:
+        source.path.write_bytes(bytes(8))
+    monkeypatch.setattr(run_module.engines, "get_engine", lambda _name: _Recording())
+    monkeypatch.setattr(run_module.engines, "available_engines", lambda tools=None: ["ffmpeg"])
+    monkeypatch.setattr(run_module, "_probe_or_fail", lambda source, project: _info())
+
+    with pytest.raises(run_module.RunError, match="stop here"):
+        run_module.align_project(project)
+
+    assert seen.get("for_measurement") is True
+
+
+def test_mpv_asks_for_a_measurement_pass(tmp_path, monkeypatch):
+    """The flag is only correct if mpv is the one setting it."""
+    from kiyas.engines import mpv as mpv_module
+
+    path = tmp_path / "x.mkv"
+    path.write_bytes(bytes(8))
+    seen = {}
+
+    def fake_prepare(self, source, **kwargs):
+        seen.update(kwargs)
+        raise EngineError("stop here")
+
+    monkeypatch.setattr(mpv_module.FfmpegEngine, "prepare", fake_prepare)
+    monkeypatch.setattr("kiyas.engines.mpv.probe", lambda *a, **k: _info(dovi_profile=5))
+    monkeypatch.setattr(
+        "kiyas.engines.mpv.binaries.require_binary", lambda *a, **k: Path("mpv.exe")
+    )
+
+    with pytest.raises(EngineError, match="stop here"):
+        mpv_module.MpvEngine().prepare(_source(path=path))
+
+    assert seen.get("for_measurement") is True
 
 
 def test_missing_file_is_reported_by_name():
