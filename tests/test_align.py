@@ -267,6 +267,27 @@ def test_the_reference_is_what_moves_when_another_source_plays_earlier():
     assert align.suggested_trims([0, -5], [0, 0]) == [5, 0]
 
 
+def test_a_weak_result_says_how_far_it_looked():
+    """The number it did not find may simply have been outside the window.
+
+    Measured on two real clips 137 frames apart: on a 1000-frame source the
+    window is 48 frames either way, so 137 was never a candidate and what came
+    back was a wrong answer marked weak. "Weak" alone reads as "the material is
+    hard"; naming the window says the search could not have found it, which is
+    a different problem with a different fix.
+    """
+    weak = align.FrameOffset("B", 3, 1, 9, 48)
+
+    assert "48" in weak.summary(FPS)
+
+
+def test_a_confident_result_does_not_mention_the_window():
+    """It found the thing; how far it was willing to look is not news."""
+    strong = align.FrameOffset("B", 3, 9, 9, 48)
+
+    assert "48" not in strong.summary(FPS)
+
+
 def test_a_weak_result_says_so_in_its_summary():
     """Three of nine positions finding the same offset is not an answer."""
     weak = align.FrameOffset("B", 5, 3, 9, 60)

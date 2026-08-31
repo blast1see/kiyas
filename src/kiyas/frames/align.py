@@ -124,7 +124,19 @@ class FrameOffset:
             text = f"{abs(self.frames)} frames {direction} ({seconds:.2f}s)"
         text += f", {self.agreed} of {self.sampled} sampled positions agree"
         if self.is_weak:
-            text += " -- weak match, treat this as a guess"
+            # The window is named here and only here, because a weak result is
+            # ambiguous in a way a confident one is not: it can mean the
+            # material was hard to match, or it can mean the real offset was
+            # never a candidate. Measured on two clips 137 frames apart, on a
+            # 1000-frame source where the window is 48 either way -- what came
+            # back was a wrong number marked "weak", and "weak" on its own
+            # reads as the first of those.
+            text += (
+                f" -- weak match, treat this as a guess. Only {self.window} frames "
+                f"either way were searched, so a larger offset would not have been "
+                f"found at all; a difference that big shows up as the source-length "
+                f"warning instead."
+            )
         return text
 
 
