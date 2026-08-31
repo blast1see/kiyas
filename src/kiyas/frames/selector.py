@@ -264,10 +264,17 @@ def extremes(
     picks = dark + light
     pool = _evenly_spaced(window, min(picks * POOL_PER_PICK, max(window.length, 1)))
     seen = avoid or set()
+    # A frame whose brightness could not be measured is left out rather than
+    # scored. Sorting it against a float raises, and giving it a number would
+    # be worse: zero would win "darkest frame in the film" on a measurement
+    # that never happened.
+    candidates = [
+        frame for frame in pool if frame not in seen and (acceptable is None or acceptable(frame))
+    ]
     scored = [
-        (brightness(frame), frame)
-        for frame in pool
-        if frame not in seen and (acceptable is None or acceptable(frame))
+        (level, frame)
+        for frame, level in ((f, brightness(f)) for f in candidates)
+        if level is not None
     ]
     if not scored:
         return []

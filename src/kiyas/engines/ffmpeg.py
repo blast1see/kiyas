@@ -430,9 +430,9 @@ class FfmpegSource:
                 creationflags=binaries.no_window_flag(),
             )
         except (OSError, subprocess.SubprocessError):
-            return 0.0
+            return None
         if proc.returncode != 0 or not proc.stdout:
-            return 0.0
+            return None
         return sum(proc.stdout) / (len(proc.stdout) * 255.0)
 
     def luma_thumbnails(self, start: int, count: int, step: int = 1) -> list[bytes]:

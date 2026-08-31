@@ -402,3 +402,27 @@ def test_nothing_acceptable_returns_nothing_rather_than_a_bad_frame():
     )
 
     assert picked == []
+
+
+def test_extremes_ignores_frames_it_could_not_measure():
+    """A failed measurement must not be ranked, and must not crash the sort.
+
+    `extremes` sorts on the brightness it is given. A None sorts against a
+    float by raising; treating it as zero would be worse still, because it
+    would be chosen as the darkest frame in the film.
+    """
+    window = selector.Window(0, 1000)
+
+    def brightness(frame: int):
+        return None if frame % 2 == 0 else frame / 1000.0
+
+    picked = selector.extremes(window, dark=1, light=1, brightness=brightness)
+
+    assert picked
+    assert all(frame % 2 == 1 for frame in picked)
+
+
+def test_extremes_gives_up_when_nothing_could_be_measured():
+    window = selector.Window(0, 1000)
+
+    assert selector.extremes(window, dark=1, light=1, brightness=lambda _f: None) == []

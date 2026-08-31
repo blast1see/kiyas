@@ -797,3 +797,74 @@ def test_an_unreadable_rpu_does_not_fail_the_run():
 
     assert len(warnings) == 1
     assert "crop = [" not in warnings[0]
+
+
+# --------------------------------------------------------------------------
+# Frame rules, when the answer is not known
+# --------------------------------------------------------------------------
+
+
+class _Judge:
+    """A prepared source that answers exactly what a test tells it to."""
+
+    def __init__(self, *, luma=0.5, kind="B", has_b=True, types=True, frame_count=1000):
+        self.name = "J"
+        self.frame_count = frame_count
+        self.supports_frame_types = types
+        self.has_b_frames = has_b
+        self._luma = luma
+        self._kind = kind
+
+    def picture_type(self, frame):
+        return self._kind
+
+    def combed(self, frame):
+        return None
+
+    def mean_luma(self, frame):
+        return self._luma
+
+
+def _predicate(judge, **frames):
+    project = config.parse(
+        {
+            "title": "T",
+            "source": [{"path": "a.mkv", "name": "A"}, {"path": "b.mkv", "name": "B"}],
+            "frames": {"method": "count", "count": 2, **frames},
+        }
+    )
+    return run._acceptability([judge], project, [])
+
+
+def test_a_frame_whose_brightness_could_not_be_measured_is_not_used():
+    """Not knowing is not the same as knowing it is bright enough.
+
+    Rejecting costs a nudge to the next candidate. Accepting costs a black
+    frame in a published comparison, which is what the rule exists to stop.
+    """
+    acceptable = _predicate(_Judge(luma=None), skip_dark=True, b_frames_only=False)
+
+    assert acceptable(10) is False
+
+
+def test_a_frame_that_is_measurably_bright_is_used():
+    acceptable = _predicate(_Judge(luma=0.5), skip_dark=True, b_frames_only=False)
+
+    assert acceptable(10) is True
+
+
+def test_an_unreadable_picture_type_is_not_taken_as_not_an_i_frame():
+    """The fallback rule is "avoid I-frames", and an unknown frame may be one.
+
+    The strict branch already refuses an unknown -- `kind != "B"` -- so the two
+    halves of the same rule disagreed about what None meant.
+    """
+    acceptable = _predicate(_Judge(kind=None, has_b=False), b_frames_only=True, skip_dark=False)
+
+    assert acceptable(10) is False
+
+
+def test_a_readable_non_i_frame_still_passes_the_fallback():
+    acceptable = _predicate(_Judge(kind="P", has_b=False), b_frames_only=True, skip_dark=False)
+
+    assert acceptable(10) is True

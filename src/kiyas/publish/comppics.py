@@ -381,7 +381,15 @@ def _send_one(client, api, comparison_id, edit_token, cell, pacer, blocked, host
             continue
 
         if response.status_code == 429:
-            time.sleep(transport.retry_after(response.headers.get("Retry-After"), attempt))
+            asked = response.headers.get("Retry-After")
+            pause = transport.retry_after(asked, attempt)
+            if pause is None:
+                # Longer than kiyas will wait. Treated like a refusal, which
+                # is what it is: set for the other workers so one answer costs
+                # one request rather than one per remaining image.
+                blocked.set()
+                raise UploadError(transport.too_long_to_wait(asked, host=host))
+            time.sleep(pause)
             continue
 
         if response.status_code == 403:

@@ -158,6 +158,43 @@ def test_the_measurement_pass_is_not_refused_profile_5(tmp_path, monkeypatch):
     assert prepared is not None
 
 
+def test_a_luma_measurement_that_failed_is_not_reported_as_black(tmp_path, monkeypatch):
+    """0.0 is a real reading, and returning it for a failure is a lie.
+
+    `skip_dark` treats anything under the threshold as a black frame, so an
+    ffmpeg that fell over made a perfectly good frame look like a fade to
+    black. Worse, `extremes` ranks by this number: a failed measurement would
+    sort to the front and be chosen as "the darkest frame in the film".
+    """
+    path = tmp_path / "x.mkv"
+    path.write_bytes(bytes(8))
+    monkeypatch.setattr("kiyas.engines.ffmpeg.probe", lambda *a, **k: _info(frame_count=100))
+    prepared = FfmpegEngine().prepare(_source(path=path, name="UHD"))
+
+    def explode(*args, **kwargs):
+        raise OSError("ffmpeg went away")
+
+    monkeypatch.setattr("kiyas.engines.ffmpeg.subprocess.run", explode)
+
+    assert prepared.mean_luma(10) is None
+
+
+def test_a_luma_measurement_ffmpeg_refused_is_not_reported_as_black(tmp_path, monkeypatch):
+    path = tmp_path / "x.mkv"
+    path.write_bytes(bytes(8))
+    monkeypatch.setattr("kiyas.engines.ffmpeg.probe", lambda *a, **k: _info(frame_count=100))
+    prepared = FfmpegEngine().prepare(_source(path=path, name="UHD"))
+
+    class _Refused:
+        returncode = 1
+        stdout = b""
+        stderr = "no such filter"
+
+    monkeypatch.setattr("kiyas.engines.ffmpeg.subprocess.run", lambda *a, **k: _Refused())
+
+    assert prepared.mean_luma(10) is None
+
+
 def test_align_asks_for_a_measurement_pass(tmp_path, monkeypatch):
     """Alignment reads brightness and never draws a picture.
 

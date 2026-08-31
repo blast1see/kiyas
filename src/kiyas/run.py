@@ -399,10 +399,20 @@ def _acceptability(prepared: list, project: Project, warnings: list[str]):
                 if source.has_b_frames:
                     if kind != "B":
                         return False
-                elif kind == "I":
+                # The fallback rule is "avoid I-frames", and a frame whose type
+                # could not be read may be one. The branch above already
+                # refuses an unknown -- `kind != "B"` -- so the two halves of
+                # one rule disagreed about what None meant. Anything else that
+                # is legibly not an I-frame still passes.
+                elif kind is None or kind == "I":
                     return False
-            if want_bright and source.mean_luma(frame) < DARK_LUMA_THRESHOLD:
-                return False
+            if want_bright:
+                luma = source.mean_luma(frame)
+                # Not knowing is not the same as knowing it is bright enough.
+                # Rejecting costs a nudge to the next candidate; accepting
+                # costs a black frame in a published comparison.
+                if luma is None or luma < DARK_LUMA_THRESHOLD:
+                    return False
             if want_clean and source.combed(frame):
                 return False
         return True

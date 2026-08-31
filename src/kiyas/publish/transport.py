@@ -191,12 +191,41 @@ def backoff(attempt: int, *, ceiling: float = MAX_BACKOFF) -> float:
     return bound * (0.5 + random.random() / 2)
 
 
-def retry_after(header: str | None, attempt: int, *, ceiling: float = MAX_BACKOFF) -> float:
-    """Honour the server's Retry-After, falling back to a linear backoff."""
+def retry_after(header: str | None, attempt: int, *, ceiling: float = MAX_BACKOFF) -> float | None:
+    """Honour the server's Retry-After, or ``None`` if it asked for too long.
+
+    The number cannot simply be clamped: retrying sooner than the server asked
+    is how a rate limit becomes a ban, which is the outcome this whole module
+    is arranged around. Waiting on it is not right either -- five attempts at
+    an hour each is a run that looks hung for most of a day, which is exactly
+    what `MAX_BACKOFF` exists to prevent for the local backoff.
+
+    So a wait past the ceiling is neither retried nor slept on. This module
+    already holds that a refusal is never retried, because further attempts
+    against a block cannot succeed and are themselves the traffic that earns
+    one; a Retry-After this long is the same answer with a number attached.
+
+    Anything unparseable falls through to the jittered local backoff, which is
+    bounded by the ceiling already.
+    """
     try:
-        return max(1.0, float(header))
+        wait = max(1.0, float(header))
     except (TypeError, ValueError):
         return backoff(attempt, ceiling=ceiling)
+    return wait if wait <= ceiling else None
+
+
+def too_long_to_wait(header: str | None, *, host: str) -> str:
+    """What to say when a host asks for a longer wait than kiyas will make.
+
+    Worded once here rather than in each backend, for the same reason reading a
+    Cloudflare refusal is: the situation is identical whichever host it is.
+    """
+    return (
+        f"{host} asked for {header} seconds before the next request. That is not a "
+        f"burst to wait out, so nothing further was sent. What is on disk is "
+        f"untouched -- publish it again later, or from another network."
+    )
 
 
 class Pacer:

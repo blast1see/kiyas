@@ -166,8 +166,15 @@ class PreparedSource(Protocol):
         """
         ...
 
-    def mean_luma(self, frame: int) -> float:
-        """Average luma in [0, 1]."""
+    def mean_luma(self, frame: int) -> float | None:
+        """Average luma in [0, 1], or ``None`` when it could not be measured.
+
+        ``None`` rather than a number, for the same reason `combed` returns it:
+        0.0 is a real reading -- a frame that is genuinely black -- and handing
+        it back for a failed measurement makes a good frame look like a fade.
+        Worse, `selector.extremes` ranks on this, so a failure would sort to
+        the front and be picked as the darkest frame in the film.
+        """
         ...
 
     def luma_thumbnails(self, start: int, count: int, step: int = 1) -> list[bytes]:

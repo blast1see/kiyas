@@ -394,8 +394,16 @@ def _send_one(
             raise UploadError(response.headers.get("X-Error-Message") or "rejected by slow.pics")
 
         if response.status_code == 429:
-            wait = transport.retry_after(response.headers.get("Retry-After"), attempt)
-            time.sleep(wait)
+            asked = response.headers.get("Retry-After")
+            pause = transport.retry_after(asked, attempt)
+            if pause is None:
+                # Longer than kiyas will wait. Treated like a refusal, which
+                # is what it is: set for the other workers so one answer costs
+                # one request rather than one per remaining image.
+                if blocked is not None:
+                    blocked.set()
+                raise UploadError(transport.too_long_to_wait(asked, host="slow.pics"))
+            time.sleep(pause)
             continue
 
         if response.status_code == 403:

@@ -499,6 +499,34 @@ def test_a_413_after_the_size_check_says_the_limit_moved(tmp_path):
         pixhost.upload(_comparison(tmp_path), session=session)
 
 
+def test_a_rate_limit_asking_for_an_hour_stops_rather_than_sleeping(tmp_path):
+    """Five attempts at an hour each is a run that looks hung for most of a day.
+
+    Retrying sooner than the host asked is how a rate limit becomes a ban, so
+    the number cannot be clamped either. Neither is right, so it stops and says
+    what was asked for.
+    """
+    session = _FakeSession(image_status=429, image_headers={"Retry-After": "3600"})
+
+    with pytest.raises(UploadError, match="3600 seconds"):
+        pixhost.upload(_comparison(tmp_path), session=session)
+
+    # One answer, not one per image: it is about the address, not the picture.
+    assert len(session.image_posts) < 4 * pixhost.MAX_ATTEMPTS
+
+
+def test_a_rate_limit_within_the_ceiling_is_waited_out(tmp_path, monkeypatch):
+    slept: list[float] = []
+    monkeypatch.setattr(pixhost.time, "sleep", slept.append)
+    # 429 once, then let it through.
+    session = _FakeSession(image_status=429, image_headers={"Retry-After": "5"})
+
+    with pytest.raises(UploadError):
+        pixhost.upload(_comparison(tmp_path), session=session)
+
+    assert 5.0 in slept
+
+
 def test_pacing_is_on_by_default():
     """The fixture above turns it off; this reads the shipped value."""
     assert SHIPPED_MIN_UPLOAD_INTERVAL > 0

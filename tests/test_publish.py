@@ -758,6 +758,30 @@ def test_retry_after_header_is_honoured():
     assert 4.0 <= transport.retry_after("nonsense", 2) <= 8.0
 
 
+def test_a_wait_longer_than_the_ceiling_is_not_a_wait():
+    """An hour is not a burst to ride out, and sleeping on it five times is worse.
+
+    Retrying sooner than the server asked is how a rate limit becomes a ban, so
+    the number cannot simply be clamped. Waiting on it cannot be right either:
+    five attempts at an hour each is a run that looks hung for most of a day.
+    The module already says a refusal is never retried; a Retry-After this long
+    is the server saying the same thing with a number attached.
+    """
+    assert transport.retry_after(str(transport.MAX_BACKOFF + 1), 0) is None
+    assert transport.retry_after("3600", 0) is None
+
+
+def test_a_wait_within_the_ceiling_is_still_obeyed_exactly():
+    assert transport.retry_after(str(int(transport.MAX_BACKOFF)), 0) == transport.MAX_BACKOFF
+
+
+def test_the_refusal_names_what_the_host_asked_for():
+    sentence = transport.too_long_to_wait("3600", host="example.test")
+
+    assert "3600" in sentence
+    assert "example.test" in sentence
+
+
 def test_retry_after_never_returns_zero():
     """A zero would turn a rate limit into a tight loop against a free service."""
     assert transport.retry_after("0", 0) >= 1.0
