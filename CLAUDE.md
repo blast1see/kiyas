@@ -167,14 +167,25 @@ python -m pytest -m integration           # needs FFmpeg
 python -m pytest -m vapoursynth           # needs 'kiyas setup' to have run
 python -m pytest -m mpv                   # needs mpv and a display
 QT_QPA_PLATFORM=offscreen python -m pytest -m gui   # needs PySide6, not a display
+python -m pytest -m live                  # uploads to all three hosts, for real
 ```
 
-Markers: `integration`, `vapoursynth`, `mpv`, `gui`, `live`. `live` is reserved
-for tests that talk to slow.pics for real, and no test carries it yet —
-publishing is checked by hand, against the live site, because the interesting
-answers there are the ones the site gives and not the ones a fake session was
-told to give. Both Cloudflare fixes in 0.1.1 came out of doing that; neither
-was visible from the suite.
+Markers: `integration`, `vapoursynth`, `mpv`, `gui`, `live`.
+
+`live` is the only one that is **deselected by default**, in `addopts`.
+Registering a marker labels tests; it does not stop them running, and a bare
+`pytest -q` — the line above that says "no media needed" — published a
+synthetic comparison to three real hosts before that was noticed. Three
+publishes to slow.pics in quick succession is also how the rate limiting in
+0.1.1 was earned. `test_the_live_publish_tests_do_not_run_by_accident` is what
+keeps the deselection there.
+
+What those tests do that a fake session cannot: upload, then read every
+returned address back and check that the picture at the far end is the one that
+was meant to be there. Brightness rather than bytes, because the hosts resize.
+The transposed grid is the failure that check exists for. Both Cloudflare fixes
+in 0.1.1 came out of talking to the real site as well; neither was visible from
+the suite.
 
 **Unit tests are necessary and not sufficient.** The version-probe bug below
 passed every unit test. Frame accuracy, tonemapping and sync have to be checked
@@ -606,11 +617,17 @@ directory per track, the same images in the same order, a manifest -- so
 
 ## Publishing
 
-There are two backends. `publish/slowpics.py` and `publish/comppics.py` share
-`publish/result.py` (the one `UploadError` and `UploadResult` both hand back),
-`publish/transport.py` (reading a Cloudflare refusal apart from an API error)
-and `publish/manifest.py`. The CLI picks one with `--to` and never branches on
-the host again after `_SENDERS`.
+There are three backends. `publish/slowpics.py`, `publish/comppics.py` and
+`publish/pixhost.py` share `publish/result.py` (the one `UploadError` and
+`UploadResult` all three hand back), `publish/manifest.py`, and
+`publish/transport.py` — which reads a Cloudflare refusal apart from an API
+error *and* holds the pacing, backoff and timeout machinery. That machinery was
+written twice, byte-identical both times; the third backend is what made
+copying it again obviously wrong. Host-specific numbers — how many workers, how
+many attempts, how far apart — stay in the backend that measured them.
+
+The CLI picks one with `--to` and never branches on the host again after
+`_SENDERS`.
 
 They are not symmetrical, and the differences below are each a place where
 carrying one backend's habits into the other produces a bug that does not look
@@ -648,7 +665,8 @@ checked against the live service; do not change them from first principles.
 
 - **Never test publishing with the user's media.** `tests/` and any live check
   use ffmpeg-generated synthetic images, unlisted, with an expiry. This holds
-  for both backends.
+  for every backend. `tests/test_publish_live.py` is the only thing that
+  uploads for real; it is `-m live` and never runs in CI.
 
 ### comp.pics
 
@@ -704,6 +722,54 @@ guessed. Read the spec before changing them.
   with `min(total_rows, 200)` instead of refusing, so without the check a long
   comparison uploads for minutes and comes out quietly short.
 
+### pixhost
+
+pixhost is an image host, not a comparison host, and that is the whole reason
+its backend is shaped differently. It publishes an API document, it takes no
+API key at all, and it answers with two addresses per image: a page and a
+thumbnail.
+
+- **`show_url` is an HTML page, not a picture, and the direct address of the
+  full-size file is not documented.** Verified live: `show_url` answers
+  `text/html`. So `image_urls` is deliberately left empty here — it is
+  documented as a *direct* URL and `bbcode` puts it inside `[img]`, where an
+  HTML page is a broken picture on every forum there is. `page_urls` and
+  `thumbnail_urls` carry what this host actually gives, and the `thumbnails`
+  format pairs them. Do not be tempted by the `t{n}.pixhost.to/thumbs/` →
+  `img{n}.pixhost.to/images/` rewrite that circulates: it is undocumented, and
+  the failure when it stops holding is a post full of dead pictures.
+
+- **10 MB per image, and a 4K PNG is close to it.** Measured 7.3 MB on a UHD
+  HDR10 frame from a real remux. Every file is sized before the first request,
+  because the alternative is twenty images uploaded and the twenty-first
+  refused, leaving a half-filled gallery.
+
+- **`optimize_for_web` is never sent.** Its default is off, and off is the only
+  setting under which a lossless PNG survives being hosted. Sending it as 1
+  would strip metadata, clamp dimensions and possibly re-encode to WebP, which
+  for a comparison tool is the one unacceptable outcome.
+
+- **A gallery is always created**, because `UploadResult.url` is required and
+  without a gallery there is no single address for a set. `include_manage_url`
+  is asked for and the answer reported through `notes`: the delete token is
+  handed out once and nothing can recover it afterwards.
+
+- **A refused `finalize` is a note, not a failure.** By then every picture is up
+  and every address is known, which is what the markup is made of.
+
+### Image proxies were considered and rejected
+
+wsrv.nl (`weserv/images`) was evaluated as a way to make thumbnails for the
+other hosts, and does not belong here. It is a *proxy*, not a host: it resizes
+pictures that are already published, so it cannot help with uploading. pixhost
+makes its own thumbnails; slow.pics hands back no per-image addresses at all,
+so there is nothing to give a proxy; that leaves comp.pics, which has its own
+viewer. It also re-encodes lossily, which is the opposite of what a comparison
+of encodes is for, and it would put a third party permanently inside somebody's
+forum post — when it goes down, every thumbnail in every post kiyas ever
+produced goes with it. Self-hosting it is possible and is a server to run for a
+problem kiyas does not have.
+
 ## Packaging
 
 `kiyas.spec` builds two executables from one collection: `kiyas.exe` with a
@@ -755,6 +821,12 @@ site-specific branding, URL or terminology belongs anywhere in this repository.
 A publishing *destination* is the one thing that has to be named, because a
 request has to go somewhere. That is a backend, not a brand: it may name the
 host in its own module, its own flag value and its own errors, and nowhere
-else. It buys no vocabulary anywhere in the tool — `FORMATS` stays
-`comparison`, `img`, `markdown`, and a second destination is a reason to make
-the shared code more neutral rather than less.
+else. It buys no vocabulary anywhere in the tool, and a further destination is
+a reason to make the shared code more neutral rather than less.
+
+`FORMATS` is `comparison`, `img`, `markdown`, `thumbnails`. The fourth arrived
+with the third destination and is the test of the rule rather than an exception
+to it: it is named after the markup it produces — a thumbnail linking to a page
+— and any backend that fills in `thumbnail_urls` and `page_urls` can use it.
+A format named `pixhost` would have been the exception, and is what the rule
+exists to refuse.

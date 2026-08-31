@@ -1,5 +1,167 @@
 # Changelog
 
+## 0.1.15
+
+### Two columns could share one directory, and the pictures overwrote each other
+
+`safe_directory_name` sanitises a source name into a folder name. Config
+rejects duplicate source *names*, but nothing checked the folders, and four
+realistic pairs of distinct names land on one folder:
+
+    "Lionsgate GBR/USA" and "Lionsgate GBR_USA"    an illegal character
+    "Remux." and "Remux"                           a trailing dot
+    "REMUX" and "remux"                            case, on any Windows disk
+    "...Atmos-GROUPONE" and "...Atmos-GROUPTWO"    truncation at 100 characters
+
+The last one is the one that bites. Scene names routinely pass 100 characters
+and differ only in the group tag at the very *end*, which is precisely the part
+truncation removes.
+
+When it happened the second column's `NNNNNN.png` overwrote the first's, the
+manifest pointed both columns at the same files, and what got published was a
+comparison of a release against itself. Nothing errored, and the result looks
+exactly like a comparison — the same shape of failure as uploading the grid
+transposed, and just as invisible.
+
+The folder names are now decided over the whole set. The first column keeps the
+name it asked for; a later collision takes `-2`, trimmed back into the length
+limit rather than pushed past it. The audio side had solved this for column
+*labels* and had the same hole in its *directories*; it uses the shared
+function now.
+
+### A file ffprobe could not read came out as a traceback
+
+`run` promises `RunError` and every caller — the CLI, the window, `align` — is
+written to that promise. `ProbeError` is a sibling of `RunError`, not a
+subclass, so pointing kiyas at something that is not a video ended in a Python
+stack trace, which reads as a crash in kiyas rather than a fact about the file.
+It is wrapped at the module's own boundary now, next to where `EngineError`
+already was, so every caller is covered rather than every caller being patched.
+
+### A typo in `[tools]` deleted an engine instead of reporting itself
+
+`find_binary` raises for a configured path that is relative or absent, and
+`available_engines` wrapped every engine in a bare `except Exception`. So
+`ffmpeg = "C:fmpginfmpeg.exe"` — one missing letter — became "no frame
+engine is available. Run 'kiyas doctor'", and doctor, which resolves from PATH,
+then reported ffmpeg as ok. The user was sent looking for a problem that was
+not there. A bad configured path now comes out as itself.
+
+### Dolby Vision profile 5 was tone mapped as HDR10, and the label agreed
+
+`media/probe.py` has said all along why this is wrong: "a DoVi profile 5 file
+carries no usable HDR10 layer at all — tonemapping it as HDR10 produces the
+green/purple cast that makes those screenshots useless." The ffmpeg engine
+mapped every Dolby Vision profile to the HDR10 chain regardless, and then burnt
+"tonemapped hdr10" into the frame, so the picture claimed to be right. The
+existing test covered profile 8, which has a real HDR10 base layer and is fine.
+
+The ffmpeg engine now refuses profile 5 and points at the VapourSynth engine,
+which reads the Dolby Vision metadata itself.
+
+A refusal about how a frame would *look* has no business stopping a
+measurement, so `prepare` gained `for_measurement`. Two callers set it: the mpv
+engine, which borrows an ffmpeg source for frame counts and brightness and
+draws the pictures itself, and `align`, which reads brightness and never draws
+anything. Without the second, `kiyas align` and `run --check-sync` would have
+started refusing profile 5 sources they handle perfectly well.
+
+### `align` said how far it had looked
+
+Measured on two clips 137 frames apart: on a 1000-frame source the search
+window is 48 frames either way, so 137 was never a candidate. What came back
+was a wrong number marked "weak match" — and "weak" on its own reads as "this
+material is hard", not "the answer was outside the window". The window is now
+named whenever the match is weak, and a block headed "Paste this into the
+project file" no longer says that when nothing in it is a confident
+measurement.
+
+The ±1% window itself is unchanged and deliberate: past that a difference is a
+different edition, and the source-length warning says that better. On the same
+clips it did, exactly: "source lengths differ by 137 frames (5.7s)".
+
+### Three ways a measurement could be believed when it had not happened
+
+`mean_luma` returned `0.0` when the ffmpeg call behind it failed, which is a
+real reading -- a frame that is genuinely black. So an ffmpeg that fell over
+made a good frame look like a fade and `skip_dark` threw it away. Ranking made
+it worse: `extremes` sorts on that number to find the darkest frame in the
+film, so a failed measurement would have won. It returns `None` now, the same
+way `combed` already did, and neither rule counts a frame it could not read.
+
+The two halves of the B-frame rule disagreed about an unreadable picture type.
+The strict half refused it (`kind != "B"`), and the fallback half -- "avoid
+I-frames", used on an encode that has none -- accepted it, although an unknown
+frame may well be one.
+
+A `Retry-After` longer than the retry ceiling was slept on, up to five times.
+An hour asked for that way is a run that looks hung for most of a day, and the
+ceiling exists to stop exactly that for the local backoff. Clamping it is not
+the answer either: retrying sooner than the server asked is how a rate limit
+becomes a ban. This module already holds that a refusal is never retried, and a
+wait that long is the same answer with a number attached, so it stops and says
+what was asked for.
+
+### Publishing to pixhost
+
+A third destination, `--to pixhost`, and a fourth markup format to go with it.
+
+pixhost is an image host rather than a comparison host, and that is the point
+of it being here. slow.pics and comp.pics store a grid with a viewer that flips
+between sources at one frame; pixhost stores pictures and hands back a page and
+a thumbnail for each. That is what a forum post wants and what neither of the
+other two gives:
+
+    [b]0:21:14.083 / 30550[/b]
+    UHD REMUX: [url=.../show/...][img]https://t3.pixhost.to/thumbs/...[/img][/url]
+
+`--format thumbnails` is the one format that does not inline the full picture,
+which is what makes a post of two dozen 4K screenshots readable. It is not a
+pixhost format: any backend that fills in `thumbnail_urls` and `page_urls` can
+use it.
+
+Details that shaped it:
+
+- **`show_url` is an HTML page, not a picture**, verified live — it answers
+  `text/html` — and the direct address of the full-size file is not documented.
+  So `image_urls` stays empty for this host rather than being filled with
+  something that would be a broken picture inside `[img]`.
+- **10 MB per image, and a 4K PNG is close to it**: 7.3 MB measured on a UHD
+  HDR10 frame. Every file is checked before the first request, because the
+  alternative is a half-filled gallery. Ten million bytes, not ten mebibytes:
+  the documentation does not say which it means, and a file in the
+  half-megabyte gap is exactly the one the check exists to stop.
+- **A failed upload still hands back the gallery's management link.** By then
+  some images are up, on a host with no expiry, and that token appears once and
+  cannot be recovered.
+- **`optimize_for_web` is never sent.** Off is its default and the only setting
+  under which a lossless PNG survives being hosted.
+- **No API key**, so nothing to store and nothing to configure.
+
+The window has a destination selector now, instead of a button that said
+"Publish to slow.pics" and a confirmation that promised the comparison would be
+unlisted whatever the destination — true of exactly one of the three.
+
+### Publishing is tested against the real hosts
+
+The `live` marker had been registered since the beginning and nothing carried
+it. `tests/test_publish_live.py` uploads a synthetic two-column set to all
+three hosts, reads every returned address back, and checks that the picture at
+the far end is the one that was meant to be there — brightness, not bytes,
+because the hosts resize. That is the check a fake session cannot make, and the
+transposed grid is the failure it exists for.
+
+`live` is now deselected in `addopts`, which it needed to be: registering a
+marker labels tests, it does not stop them running, so `pytest -q` — the
+command the notes describe as "unit tests, no media needed" — published to all
+three hosts. Three publishes to slow.pics in quick succession is how the rate
+limiting in 0.1.1 was earned in the first place. `pytest -m live` opts in and
+replaces the expression; CI's own filter is unaffected.
+
+The pacing, backoff and timeout machinery had been written twice, byte for
+byte. It lives in `publish/transport.py` now. The numbers that are actually
+per-host stayed where they were measured.
+
 ## 0.1.14
 
 ### No more console windows — this time all of them

@@ -448,6 +448,7 @@ that is the one thing that cannot be guessed.
 ```
 kiyas publish out/ --to comppics                 # comp.pics instead
 kiyas publish out/ --to comppics --tag remux     # tag it
+kiyas publish out/ --to pixhost                  # an image host, see below
 kiyas run project.toml --publish --publish-to comppics
 ```
 
@@ -490,6 +491,54 @@ On slow.pics that prints a link to the collection, because the upload hands
 back no per-image addresses. On comp.pics it prints the real thing: one tag
 holding the whole grid, frame by frame, which is what a reader can flip
 through.
+
+#### pixhost, for screenshots rather than comparisons
+
+```
+kiyas publish out/ --to pixhost --format thumbnails
+kiyas publish out/ --to pixhost --thumb-size 500
+```
+
+The other two hosts store a *comparison*: a grid they know the shape of, with a
+viewer that flips between sources at one frame. [pixhost](https://pixhost.to)
+stores pictures. What it gives back for each one is a page and a thumbnail,
+which is what a forum post wants and what neither of the other two hands over:
+
+```
+[b]0:21:14.083 / 30550[/b]
+UHD REMUX: [url=https://pixhost.to/show/...][img]https://t3.pixhost.to/thumbs/...[/img][/url]
+1080p BluRay: [url=https://pixhost.to/show/...][img]https://t3.pixhost.to/thumbs/...[/img][/url]
+```
+
+That is the `thumbnails` format, and it is the one format that does not inline
+the full picture — which is what makes a post of two dozen 4K screenshots
+readable rather than a scroll.
+
+So this is the host for a set of screenshots that is going into a post. For a
+comparison it is the wrong shape and kiyas says so before sending anything,
+rather than refusing: a screenshot set of two releases is a real thing to want
+hosted.
+
+Four things to know:
+
+- **No account and no key.** The API does not take one, so there is nothing to
+  store and nothing to configure.
+- **10 MB per image.** A 4K PNG passes that regularly — measured at 7.3 MB on a
+  UHD HDR10 frame, which is close enough that a busier frame will not fit.
+  kiyas checks every file before sending anything and names the ones that are
+  over, because twenty images can go up before the twenty-first is refused.
+- **No unlisted mode and no expiry**, so `--public`, `--no-optimize`, `--tmdb`
+  and `--remove-after` have no equivalent and are named as ignored. `--nsfw`
+  does apply here. A gallery's management link is printed once, because the API
+  hands it out once and nothing can recover it afterwards.
+- **The PNG is stored unmodified.** pixhost's web optimisation is off by
+  default and kiyas never turns it on, which is the only condition under which
+  a lossless screenshot survives being hosted.
+
+`--format comparison` and `--format img` fall back to a single link here: those
+tags need the address of the picture itself, and the only per-image address
+pixhost documents is an HTML page. Putting a page inside an `[img]` tag is a
+broken picture on every forum there is, so kiyas does not.
 
 **Uploads are paced deliberately.** slow.pics is free, run by one person, and
 sits behind Cloudflare, which blocks addresses that arrive in bursts — a
